@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Test trang cau hinh /setup (settings_api.py) - khong dung lifespan/EdgeAgent
 that de tranh goi mang, chi test router doc lap voi mot FastAPI app rong."""
+import base64
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -424,3 +426,191 @@ def test_validate_accepts_wildcard_and_valid_cidr(client):
     resp2 = client.post("/setup", data=form2)
     assert resp2.status_code == 200
     assert "Saved" in resp2.text
+
+
+def test_setup_get_wraps_notice_text_in_single_span(client):
+    """Regression cho bug CSS Flexbox co san (`.notice{display:flex}` chua
+    text-node xen `<b>` khien vo thanh nhieu cot) - toan bo noi dung text
+    (ke ca `<b>restart</b>`) phai nam trong DUY NHAT 1 `<span>` de la 1 flex-
+    item duy nhat, khong tach rieng."""
+    resp = client.get("/setup")
+    assert resp.status_code == 200
+    assert "<span>Saving applies most changes immediately." in resp.text
+    assert "restarted (socket/storage opened once at startup).</span></p>" in resp.text
+
+
+class _FakeStoreWithApiKey:
+    """Store gia lap chi implement kv_get("api_key") - du cho test /setup va
+    /setup/api_key doc api_key, khong can Store SQLite that."""
+
+    def kv_get(self, key, default=None):
+        return "testkey1234abcd" if key == "api_key" else default  # secret-allow: test fixture, khong phai key that
+
+
+def test_mask_api_key_none_and_short_and_normal():
+    """6 dau cham CO DINH (khong ti le theo do dai key that, tranh lo metadata
+    do dai) + 4 ky tu cuoi - xem docstring _mask_api_key()."""
+    assert settings_api._mask_api_key(None) is None
+    assert settings_api._mask_api_key("") is None
+
+    masked = settings_api._mask_api_key("abcd1234efgh")
+
+    assert masked == "••••••efgh"
+    assert masked.count("•") == 6
+    assert masked.endswith("efgh")
+
+
+def test_setup_get_shows_not_yet_received_when_no_api_key():
+    """FastAPI() tran (khong co app.state.store, giong pattern test activity
+    da co) -> phai hien thong bao "chua nhan duoc", KHONG co nut Copy (khong
+    co gi de copy)."""
+    app = FastAPI()
+    app.include_router(settings_api.router)
+    test_client = TestClient(app)
+
+    resp = test_client.get("/setup")
+
+    assert resp.status_code == 200
+    assert "Not yet received" in resp.text
+    assert 'id="copy-api-key-btn"' not in resp.text
+
+
+def test_setup_get_shows_masked_key_and_copy_button_when_present():
+    """Assertion quan trong nhat: full raw api_key KHONG BAO GIO duoc nhung
+    vao HTML /setup (chi masked) - /setup co the truy cap qua domain public
+    (tunnel), lo full secret qua view-source/devtools se rat nguy hiem. Chi
+    GET /setup/api_key (endpoint rieng, goi luc bam Copy) moi duoc tra raw -
+    xem docstring _mask_api_key()/setup_api_key()."""
+    app = FastAPI()
+    app.include_router(settings_api.router)
+    app.state.store = _FakeStoreWithApiKey()
+    test_client = TestClient(app)
+
+    resp = test_client.get("/setup")
+
+    assert resp.status_code == 200
+    assert "••••••abcd" in resp.text
+    assert 'id="copy-api-key-btn"' in resp.text
+    assert "testkey1234abcd" not in resp.text
+
+
+def test_setup_api_key_endpoint_returns_raw_value():
+    """GET /setup/api_key la endpoint DUY NHAT duoc phep tra raw value - thiet
+    ke co chu dich (goi tu JS luc bam Copy), khong phai thieu sot."""
+    app = FastAPI()
+    app.include_router(settings_api.router)
+    app.state.store = _FakeStoreWithApiKey()
+    test_client = TestClient(app)
+
+    resp = test_client.get("/setup/api_key")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"api_key": "testkey1234abcd"}  # secret-allow: test fixture
+
+
+def test_setup_api_key_endpoint_returns_null_when_store_missing():
+    app = FastAPI()
+    app.include_router(settings_api.router)
+    test_client = TestClient(app)
+
+    resp = test_client.get("/setup/api_key")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"api_key": None}
+
+
+def test_setup_get_api_key_script_has_fallback_copy(client):
+    """Regression cho bug that: navigator.clipboard.writeText() CHI hoat dong
+    trong secure context (HTTPS/localhost) - truy cap /setup qua LAN HTTP
+    thuong (vd http://192.168.5.190:8090/setup, threat-model goc cua project)
+    khien nut Copy "khong lam gi" vi Clipboard API khong ton tai/bi chan va
+    `.catch(function(){})` cu nuot loi im lang. Verify ca 2 nhanh (Clipboard
+    API hien dai VA fallback execCommand('copy')) deu co mat nguyen ven trong
+    HTML - string-contains don gian, khong chay JS that (headless browser
+    ngoai scope pytest, xem 'Scope da KHONG cover' vong truoc)."""
+    resp = client.get("/setup")
+    assert resp.status_code == 200
+    assert "navigator.clipboard && navigator.clipboard.writeText" in resp.text
+    assert "document.execCommand('copy')" in resp.text
+    assert "function fallbackCopy(text)" in resp.text
+
+
+def test_setup_get_no_gate_when_token_empty(client):
+    """Tuong thich nguoc: EDGE_SETUP_TOKEN mac dinh rong (`config.settings.
+    setup_token == ""` - xem conftest.py `_clean_edge_env`/singleton baseline)
+    -> KHONG gate gi, deployment cu chua cau hinh token khong duoc regression
+    thanh 401 - xem python-reviewer 2026-09-17 (finding lo credential /setup/api_key)."""
+    assert config.settings.setup_token == ""
+    resp = client.get("/setup")
+    assert resp.status_code == 200
+
+
+def test_setup_requires_basic_auth_when_token_set(client):
+    """`config.settings.setup_token` duoc `_restore_settings_singleton`
+    (conftest.py, autouse) tu dong khoi phuc sau test nay - khong can fixture
+    rieng. Basic Auth: username bat ky, password phai khop token qua
+    secrets.compare_digest."""
+    config.settings.setup_token = "sekret"  # secret-allow: test fixture
+
+    resp_no_auth = client.get("/setup")
+    assert resp_no_auth.status_code == 401
+    assert "Basic" in resp_no_auth.headers.get("www-authenticate", "")
+
+    resp_wrong = client.get("/setup", auth=("anyuser", "wrong-password"))
+    assert resp_wrong.status_code == 401
+
+    resp_ok = client.get("/setup", auth=("anyuser", "sekret"))
+    assert resp_ok.status_code == 200
+
+
+def test_setup_api_key_endpoint_requires_auth_when_token_set(client):
+    """GET /setup/api_key la endpoint driver chinh cua finding (tra RAW
+    credential) - phai co test rieng, khong chi dua vao test /setup."""
+    config.settings.setup_token = "sekret"  # secret-allow: test fixture
+
+    resp_no_auth = client.get("/setup/api_key")
+    assert resp_no_auth.status_code == 401
+
+    resp_wrong = client.get("/setup/api_key", auth=("anyuser", "wrong-password"))
+    assert resp_wrong.status_code == 401
+
+    resp_ok = client.get("/setup/api_key", auth=("anyuser", "sekret"))
+    assert resp_ok.status_code == 200
+
+
+def test_setup_post_requires_auth_when_token_set(client):
+    """Gate auth phai chay TRUOC _is_same_origin check - thieu auth phai bi
+    401 NGAY CA KHI Origin header dung (khong duoc lot qua den buoc CSRF)."""
+    config.settings.setup_token = "sekret"  # secret-allow: test fixture
+
+    resp = client.post("/setup", data=_valid_form(),
+                        headers={"origin": "http://testserver"})
+
+    assert resp.status_code == 401
+
+
+def test_mask_api_key_short_key_fully_masked():
+    """Regression cho finding Minor cung dot review: key <=8 ky tu -
+    str(key)[-4:] tren chuoi ngan se tra ve NGUYEN VEN ca chuoi, lam 'mask' lo
+    100% key - gio phai che TOAN BO ("••••••"),
+    khong lo bat ky ky tu nao cua key that."""
+    masked = settings_api._mask_api_key("abcdefgh")  # 8 ky tu, dung nguong <=8
+
+    assert masked == "••••••"
+    for ch in "abcdefgh":
+        assert ch not in masked
+
+
+def test_setup_requires_basic_auth_rejects_non_ascii_password_without_crash(client):
+    """Regression cho bug crash that: secrets.compare_digest(str, str) RAISE
+    TypeError khi 1 trong 2 chuoi chua ky tu non-ASCII - ai do go dai password
+    non-ASCII (khong can biet token that) se lam route tra ve 500 thay vi 401
+    (loi lo ra qua stack trace, te hon ca reject binh thuong). Gio phai encode
+    utf-8 sang bytes truoc khi so - assertion quan trong nhat la 401, KHONG
+    phai 500 - xem python-reviewer 2026-09-17."""
+    config.settings.setup_token = "sekret"  # secret-allow: test fixture
+    credentials = base64.b64encode("user:héllo".encode("utf-8")).decode("ascii")
+
+    resp = client.get("/setup", headers={"Authorization": "Basic %s" % credentials})
+
+    assert resp.status_code == 401

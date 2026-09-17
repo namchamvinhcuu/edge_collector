@@ -11,10 +11,19 @@ dat sau reverse-proxy/tunnel (vd truy cap qua domain public) NEU cau hinh dung
 EDGE_FORWARDED_ALLOW_IPS (xem duoi). CHI 4 field (EDGE_LISTEN_HOST/PORT,
 EDGE_STATE_DIR, EDGE_FORWARDED_ALLOW_IPS - xem config.RESTART_REQUIRED_KEYS)
 van can KHOI DONG LAI edge_collector moi ap dung (socket da bind / SQLite da
-mo co dinh / uvicorn da doc gia tri nay luc startup); 11 field con lai (Main
-URL/Edge code/Name/Platform/Base URL + 6 interval) ap dung NGAY sau Save,
-khong can restart - xem review 2026-09-17 (tinh nang hot-reload, phat sinh tu
-cau hoi thuc te cua Nam).
+mo co dinh / uvicorn da doc gia tri nay luc startup); 12 field con lai (Main
+URL/Edge code/Name/Platform/Base URL/Setup access token + 6 interval) ap dung
+NGAY sau Save, khong can restart - xem review 2026-09-17 (tinh nang
+hot-reload, phat sinh tu cau hoi thuc te cua Nam).
+
+EDGE_SETUP_TOKEN: rong (mac dinh) = KHONG gate gi (giu nguyen threat-model
+LAN-only cu). Dat 1 gia tri de yeu cau HTTP Basic Auth (username bat ky,
+password = token nay) cho TOAN BO /setup/GET/POST/activity/api_key - xem
+_check_setup_auth(). Sinh ra vi GET /setup/api_key tra RAW credential (Odoo
+api_key) khong auth, va /setup gio co the truy cap qua domain public (xem
+EDGE_FORWARDED_ALLOW_IPS o tren) - anh co URL la lay duoc key, dung de mao
+danh edge nay goi thang Odoo tu bat ky dau. STRONGLY RECOMMENDED dat gia tri
+nay khi /setup duoc tunnel ra ngoai LAN - xem python-reviewer 2026-09-17.
 
 EDGE_FORWARDED_ALLOW_IPS: IP/CIDR cua reverse-proxy/tunnel duoc TIN de doc
 X-Forwarded-Proto/-Host, truyen thang cho uvicorn's ProxyHeadersMiddleware.
@@ -28,9 +37,11 @@ nay dung IP/CIDR cua proxy/tunnel do (KHONG dat "*" tru khi da chan chac
 chan khong ai khac gui thang toi cong nay duoc, vi "*" se trust
 X-Forwarded-Proto tu BAT KY client nao, mo duong gia mao Origin qua header).
 """
+import base64
 import html
 import ipaddress
 import math
+import secrets
 import time
 from pathlib import Path
 from typing import Dict, List
@@ -38,7 +49,7 @@ from urllib.parse import urlsplit
 
 from dotenv.main import dotenv_values
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from .config import DOTENV_PATH, RESTART_REQUIRED_KEYS, reload_settings, settings
 
@@ -85,6 +96,12 @@ _FIELDS = [
              "- set to your reverse-proxy/tunnel's address if /setup is reached "
              "through one (fixes CSRF false-reject over HTTPS tunnels)",
      "group": "network"},
+    {"key": "EDGE_SETUP_TOKEN", "label": "Setup access token", "default": "",
+     "hint": "Leave blank = no access control (LAN-only threat model, previous "
+             "behaviour). Set a secret here to require it (HTTP Basic Auth, any "
+             "username) for every /setup page and API - strongly recommended if "
+             "/setup is reached through a public domain/tunnel.",
+     "group": "network", "input_type": "password"},
     {"key": "EDGE_HELLO_INTERVAL_S", "label": "Hello interval (s)", "default": "30",
      "hint": "Register / renew liveness with Odoo", "group": "timing"},
     {"key": "EDGE_HEARTBEAT_INTERVAL_S", "label": "Heartbeat interval (s)", "default": "30",
@@ -186,13 +203,15 @@ label { font-size: 0.88rem; font-weight: 500; }
   font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: .03em;
   color: var(--badge-fg); background: var(--badge-bg); padding: 2px 7px; border-radius: 999px;
 }
-input[type=text] {
+input[type=text], input[type=password] {
   width: 100%; font: inherit; color: var(--fg); background: var(--input-bg);
   border: 1px solid var(--input-border); border-radius: 8px; padding: 8px 11px;
   transition: border-color 150ms, box-shadow 150ms;
 }
-input[type=text]:focus-visible { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px var(--ring-glow); }
-input[type=text].invalid { border-color: var(--danger); }
+input[type=text]:focus-visible, input[type=password]:focus-visible {
+  outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px var(--ring-glow);
+}
+input[type=text].invalid, input[type=password].invalid { border-color: var(--danger); }
 .field-error { color: var(--danger); font-size: 0.78rem; margin: 2px 0 0; grid-column: 2; }
 @media (max-width: 680px) { .field-error { grid-column: 1; } }
 .actions { margin-top: 4px; }
@@ -217,6 +236,19 @@ button[type=submit]:focus-visible { outline: 2px solid var(--ring); outline-offs
 .a-age { color: var(--muted-fg); font-size: 0.72rem; white-space: nowrap; }
 .a-val { color: var(--muted-fg); margin-top: 2px; }
 .activity-empty { color: var(--muted-fg); font-size: 0.82rem; padding: 8px 0; margin: 12px 0 0; }
+.readonly-row { display: flex; gap: 8px; align-items: center; }
+.readonly-value {
+  font: inherit; color: var(--fg); background: var(--input-bg);
+  border: 1px solid var(--input-border); border-radius: 8px; padding: 8px 11px;
+  margin: 0; font-family: ui-monospace, Consolas, monospace; flex: 1; min-width: 0;
+}
+.copy-btn {
+  background: var(--badge-bg); color: var(--fg); border: 1px solid var(--input-border);
+  border-radius: 8px; padding: 8px 14px; font: inherit; font-size: 0.82rem; font-weight: 500;
+  cursor: pointer; white-space: nowrap; transition: filter 150ms;
+}
+.copy-btn:hover { filter: brightness(1.1); }
+.copy-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 """
 
 
@@ -252,6 +284,51 @@ _ACTIVITY_SCRIPT = """<script>
   }
   poll();
   setInterval(poll, 3000);
+})();
+</script>"""
+
+# Nut Copy KHONG bao gio doc gia tri tu DOM/HTML da render (o do chi co ban
+# mask) - luon fetch /setup/api_key rieng luc bam, giu dung nguyen tac "full
+# secret khong nam san trong response ban dau" du van cho phep copy khi can.
+_API_KEY_SCRIPT = """<script>
+(function(){
+  var btn = document.getElementById('copy-api-key-btn');
+  if (!btn) return;
+  function showCopied(){
+    var orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(function(){ btn.textContent = orig; }, 1500);
+  }
+  function fallbackCopy(text){
+    // navigator.clipboard.writeText CHI hoat dong trong secure context
+    // (HTTPS hoac localhost) - edge nay thuong truy cap qua LAN HTTP thuong
+    // (threat-model goc), nen can fallback nay cho truong hop do, khong chi
+    // dua vao Clipboard API hien dai - xem bug bao cao 2026-09-17 (nut Copy
+    // "khong hoat dong" khi truy cap qua http://192.168.x.x thuong).
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    return ok;
+  }
+  btn.addEventListener('click', function(){
+    fetch('/setup/api_key').then(function(r){ return r.json(); }).then(function(data){
+      if (!data.api_key) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(data.api_key).then(showCopied, function(){
+          if (fallbackCopy(data.api_key)) showCopied();
+        });
+      } else if (fallbackCopy(data.api_key)) {
+        showCopied();
+      }
+    }).catch(function(){});
+  });
 })();
 </script>"""
 
@@ -392,25 +469,29 @@ def _render_field(f: dict, values: dict, errors: Dict[str, List[str]]) -> str:
             key, html.escape("; ".join(field_errors)))
     badge = ('<span class="badge">%s restart</span>' % _ICON_RESTART
               if key in RESTART_REQUIRED_KEYS else "")
+    input_type = f.get("input_type", "text")
     return (
         '<div class="field">'
         '<label for="%s">%s%s</label>'
-        '<input type="text" class="%s" id="%s" name="%s" value="%s" aria-describedby="%s" %s>'
+        '<input type="%s" class="%s" id="%s" name="%s" value="%s" aria-describedby="%s" %s>'
         '<p class="hint" id="%s-hint">%s</p>'
         '%s'
         '</div>'
     ) % (key, html.escape(f["label"]), badge,
-         invalid_cls.strip(), key, key, val, describedby,
+         input_type, invalid_cls.strip(), key, key, val, describedby,
          'aria-invalid="true"' if field_errors else "",
          key, html.escape(f["hint"]), error_html)
 
 
-def _render(values: dict, errors: "Dict[str, List[str]]" = None, saved: bool = False) -> str:
+def _render(values: dict, errors: "Dict[str, List[str]]" = None, saved: bool = False,
+            api_key_masked: str = None) -> str:
     errors = errors or {}
     sections = []
     for gkey, gtitle, gdesc in _GROUPS:
         fields_html = "".join(_render_field(f, values, errors)
                                for f in _FIELDS if f["group"] == gkey)
+        if gkey == "network":
+            fields_html += _api_key_field_html(api_key_masked)
         sections.append(
             '<fieldset><legend>%s</legend><p class="group-desc">%s</p>%s</fieldset>'
             % (html.escape(gtitle), html.escape(gdesc), fields_html)
@@ -455,7 +536,7 @@ def _render(values: dict, errors: "Dict[str, List[str]]" = None, saved: bool = F
 <div class="wrap">
 <h1>Edge Collector Settings</h1>
 <p class="lede">Configure this edge without editing <code>.env</code> by hand.</p>
-<p class="notice">%s Saving applies most changes immediately. Fields marked <b>restart</b> need edge_collector restarted (socket/storage opened once at startup).</p>
+<p class="notice">%s <span>Saving applies most changes immediately. Fields marked <b>restart</b> need edge_collector restarted (socket/storage opened once at startup).</span></p>
 %s
 <form method="post" action="/setup" novalidate>
 %s
@@ -470,7 +551,9 @@ def _render(values: dict, errors: "Dict[str, List[str]]" = None, saved: bool = F
 </div>
 %s
 %s
-</body></html>""" % (_CSS, _ICON_RESTART, banner, "".join(sections), focus_script, _ACTIVITY_SCRIPT)
+%s
+</body></html>""" % (_CSS, _ICON_RESTART, banner, "".join(sections), focus_script,
+                     _ACTIVITY_SCRIPT, _API_KEY_SCRIPT)
 
 
 def _is_same_origin(request: Request) -> bool:
@@ -489,9 +572,114 @@ def _is_same_origin(request: Request) -> bool:
     return (parsed.scheme, parsed.netloc) == (request.url.scheme, request.url.netloc)
 
 
+def _mask_api_key(key) -> str:
+    """Che tat ca tru 4 ky tu cuoi (do dai co dinh 6 cham, KHONG ti le theo
+    do dai key that - tranh lo luon metadata do dai). Dung cho HIEN THI TREN
+    MAN HINH; gia tri THAT chi duoc tra qua GET /setup/api_key khi bam nut
+    Copy, KHONG bao gio nhung vao HTML ban dau - /setup co the truy cap qua
+    domain public (tunnel, xem review 2026-09-17 vu CSRF), giu nguyen quyet
+    dinh cua Nam: mask tren man hinh dung muc du van cho copy full value khi
+    can dung o noi khac (vd dan vao Postman de debug)."""
+    if not key:
+        return None
+    key = str(key)
+    if len(key) <= 8:
+        # Key that qua ngan (kieu do dai bat thuong - key that do Odoo sinh
+        # thuong la UUID/hex dai) - str(key)[-4:] tren chuoi <=4 ky tu se tra
+        # ve NGUYEN VEN ca chuoi, lam "mask" lo 100% key. Coi day la dau hieu
+        # bat thuong, che toan bo thay vi lo not - xem python-reviewer
+        # 2026-09-17 (vong review API key feature).
+        return "••••••"
+    return "••••••" + key[-4:]
+
+
+def _api_key_field_html(masked: str) -> str:
+    if masked:
+        return (
+            '<div class="field">'
+            '<label>Odoo API key</label>'
+            '<div class="readonly-row">'
+            '<p class="readonly-value">%s</p>'
+            '<button type="button" class="copy-btn" id="copy-api-key-btn">Copy</button>'
+            '</div>'
+            '<p class="hint">Learned from Odoo after the first successful hello - '
+            'read-only, not stored in .env</p>'
+            '</div>'
+        ) % html.escape(masked)
+    return (
+        '<div class="field">'
+        '<label>Odoo API key</label>'
+        '<p class="readonly-value">Not yet received (waiting for first hello to Odoo)</p>'
+        '<p class="hint">Learned from Odoo after the first successful hello - '
+        'read-only, not stored in .env</p>'
+        '</div>'
+    )
+
+
+def _current_api_key_masked(request: Request) -> str:
+    store = getattr(request.app.state, "store", None)
+    key = store.kv_get("api_key") if store is not None else None
+    return _mask_api_key(key)
+
+
+def _check_setup_auth(request: Request) -> "Response | None":
+    """Gate HTTP Basic Auth cho TOAN BO be mat /setup/* - CHI active khi Nam
+    da dat EDGE_SETUP_TOKEN (mac dinh rong = khong gate, tuong thich nguoc
+    voi deployment cu chua cau hinh, giu dung threat-model LAN-only goc).
+
+    Sinh ra vi GET /setup/api_key tra RAW credential (khong phai du lieu do
+    nhu /setup/activity) - ai co URL (vd qua tunnel cong khai) la lay duoc
+    bang 1 lenh curl, dung de mao danh edge nay goi thang Odoo TU BAT KY DAU,
+    vuot han bien gioi 'LAN trust' cua toan bo /setup. Origin-check
+    (_is_same_origin) KHONG chan duoc vector nay (chu dong cho qua khi
+    THIEU header Origin - dung 1 curl/script thuong khong gui Origin) - xem
+    python-reviewer 2026-09-17. secrets.compare_digest de tranh timing
+    attack do dai token dung."""
+    token = settings.setup_token
+    if not token:
+        return None
+    auth = request.headers.get("authorization", "")
+    supplied = ""
+    if auth.startswith("Basic "):
+        try:
+            decoded = base64.b64decode(auth[6:]).decode("utf-8", "replace")
+            _, _, supplied = decoded.partition(":")
+        except (ValueError, UnicodeDecodeError):
+            supplied = ""
+    # encode() sang bytes TRUOC khi so - secrets.compare_digest(str, str) RAISE
+    # TypeError neu 1 trong 2 chuoi co ky tu non-ASCII (gioi han rieng cua
+    # bien the str-str, KHONG ap dung cho bytes-bytes). Ai do go dai 1 mat
+    # khau chua ky tu non-ASCII (khong can biet token that) se lam route
+    # crash 500 thay vi 401 dung thiet ke - xem python-reviewer 2026-09-17
+    # (vong verify auth gate, bat bang thuc nghiem TestClient that).
+    if supplied and secrets.compare_digest(supplied.encode("utf-8"), token.encode("utf-8")):
+        return None
+    return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="edge setup"'})
+
+
 @router.get("/setup", response_class=HTMLResponse)
-async def setup_get():
-    return _render(_current_values())
+async def setup_get(request: Request):
+    denied = _check_setup_auth(request)
+    if denied:
+        return denied
+    return _render(_current_values(), api_key_masked=_current_api_key_masked(request))
+
+
+@router.get("/setup/api_key")
+async def setup_api_key(request: Request):
+    """Tra RAW api_key that - CHI goi khi Nam bam nut Copy (xem
+    _API_KEY_SCRIPT), khong bao gio tu dong nhung vao HTML/_render(). KHAC
+    /setup/activity ve muc do rui ro (do la du lieu do, day la 1 CREDENTIAL
+    song dung de mao danh edge goi Odoo) - _check_setup_auth() la gate BAT
+    BUOC cho endpoint nay khi EDGE_SETUP_TOKEN da duoc cau hinh, xem
+    python-reviewer 2026-09-17 (khong con chi dua vao "cung threat-model
+    LAN/tunnel" nhu truoc)."""
+    denied = _check_setup_auth(request)
+    if denied:
+        return denied
+    store = getattr(request.app.state, "store", None)
+    key = store.kv_get("api_key") if store is not None else None
+    return {"api_key": key}
 
 
 @router.get("/setup/activity")
@@ -501,6 +689,9 @@ async def setup_activity(request: Request):
     node_api.py/scheduler.py), KHONG mo kenh log rieng. store co the None
     khi test dung FastAPI() tran (khong qua lifespan that) - tra rong an toan,
     giong pattern agent=None o setup_post()."""
+    denied = _check_setup_auth(request)
+    if denied:
+        return denied
     store = getattr(request.app.state, "store", None)
     rows = store.history_recent(limit=50) if store is not None else []
     now = time.time()
@@ -518,19 +709,25 @@ async def setup_activity(request: Request):
 
 @router.post("/setup", response_class=HTMLResponse)
 async def setup_post(request: Request):
+    denied = _check_setup_auth(request)
+    if denied:
+        return denied
     if not _is_same_origin(request):
         return HTMLResponse(
             _render(_current_values(),
                     errors={"_form": ["Rejected: request did not originate from the /setup "
                                        "page (possible CSRF) - reopen /setup and save from "
-                                       "that page"]}),
+                                       "that page"]},
+                    api_key_masked=_current_api_key_masked(request)),
             status_code=403,
         )
     form = await request.form()
     values = {f["key"]: str(form.get(f["key"], "")).strip() for f in _FIELDS}
     errors = _validate(values)
     if errors:
-        return HTMLResponse(_render(values, errors=errors), status_code=400)
+        return HTMLResponse(
+            _render(values, errors=errors, api_key_masked=_current_api_key_masked(request)),
+            status_code=400)
     if not values["EDGE_CODE"]:
         # De trong = "giu nguyen" (dung UX hint "leave blank to auto-generate
         # on first run") - PHAI ghi gia tri DANG HIEU LUC THAT (settings.edge_code,
@@ -552,7 +749,8 @@ async def setup_post(request: Request):
             _render(_current_values(),
                     errors={"_form": ["Could not write .env: %s - check that this file "
                                        "is writable by the container's uid 1000 (see "
-                                       "README, section 'Running with Docker')" % exc]}),
+                                       "README, section 'Running with Docker')" % exc]},
+                    api_key_masked=_current_api_key_masked(request)),
             status_code=500,
         )
     reload_settings(_ENV_PATH)
@@ -563,4 +761,4 @@ async def setup_post(request: Request):
     agent = getattr(request.app.state, "agent", None)
     if agent is not None:
         agent.odoo.refresh_base_url()
-    return _render(values, saved=True)
+    return _render(values, saved=True, api_key_masked=_current_api_key_masked(request))

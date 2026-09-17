@@ -45,6 +45,12 @@ class Settings:
     # (vd truy cap /setup qua domain public) - xem review 2026-09-17
     # (CSRF false-positive qua tunnel, _is_same_origin() settings_api.py).
     forwarded_allow_ips: str = os.environ.get("EDGE_FORWARDED_ALLOW_IPS", "127.0.0.1,::1")
+    # HTTP Basic Auth token cho toan bo /setup/* - rong = khong gate (mac dinh,
+    # tuong thich nguoc). Doc lai moi request (settings_api._check_setup_auth)
+    # nen la field "hot" that su - xem reload() ben duoi. Sinh ra tu finding
+    # cua python-reviewer 2026-09-17: GET /setup/api_key tra RAW credential
+    # (khong phai du lieu do nhu /setup/activity) qua domain co the public.
+    setup_token: str = os.environ.get("EDGE_SETUP_TOKEN", "")
 
     state_dir: Path = field(default_factory=lambda: Path(os.environ.get("EDGE_STATE_DIR", "./var")))
 
@@ -78,7 +84,8 @@ class Settings:
         settings.X tuoi moi lan goi/moi vong lap, khong bi "bake" mot lan):
         main_url/edge_code/edge_name/edge_platform/edge_base_url (odoo_client.py
         _headers()/hello() doc lai moi call) + 6 interval (scheduler.py doc
-        lai moi vong asyncio.sleep). KHONG dung cho listen_host/listen_port
+        lai moi vong asyncio.sleep) + setup_token (settings_api._check_setup_auth
+        doc lai moi request). KHONG dung cho listen_host/listen_port
         (uvicorn da bind socket luc khoi dong, doi vao day khong ai doc lai),
         state_dir (Store da mo SQLite co dinh luc EdgeAgent.__init__), va
         forwarded_allow_ips (uvicorn.run() da doc gia tri nay 1 lan luc
@@ -106,6 +113,7 @@ class Settings:
         self.submit_interval_s = float(
             os.environ.get("EDGE_SUBMIT_INTERVAL_S", str(self.submit_interval_s)))
         self.config_debounce_s = _int("EDGE_CONFIG_DEBOUNCE_S", self.config_debounce_s)
+        self.setup_token = os.environ.get("EDGE_SETUP_TOKEN", "")
 
 
 settings = Settings()
