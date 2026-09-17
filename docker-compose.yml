@@ -1,0 +1,24 @@
+services:
+  edge_collector:
+    build: .
+    ports:
+      # Docker Compose TU DOC file .env cung thu muc de thay ${...} o day (rieng
+      # voi viec app trong container tu doc .env qua python-dotenv) - nen host
+      # port va port TRONG container LUON khop dung EDGE_LISTEN_PORT dang cau
+      # hinh, khong con lech nhau du Nam doi port qua /setup hay sua tay. Neu
+      # .env chua co bien nay thi fallback 8000. Con bi bao "port is already
+      # allocated" nghia la port do (khong phai 8000 mac dinh nua) da bi
+      # project/container KHAC tren may chiem - kiem tra `docker ps` / `ss -ltnp`
+      # roi doi EDGE_LISTEN_PORT trong .env sang port trong.
+      - "${EDGE_LISTEN_PORT:-8000}:${EDGE_LISTEN_PORT:-8000}"
+    volumes:
+      - ./.env:/app/.env
+      - edge_data:/data
+    restart: unless-stopped
+    # Neu source la thiet bi serial that (kind=serial, khong phai sim), can
+    # mount cong vat ly vao container - vd:
+    # devices:
+    #   - /dev/ttyUSB0:/dev/ttyUSB0
+
+volumes:
+  edge_data:

@@ -1,0 +1,14 @@
+venv/
+venv_linux/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.serena/
+tests/
+var/
+var_dev/
+var_bak_lan_192.168.5.12/
+.env
+.env.bak-*
+.git/

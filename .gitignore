@@ -1,0 +1,21 @@
+# Secrets / real config - KHONG BAO GIO commit (dung .env.example lam template)
+.env
+.env.bak-*
+
+# State runtime (SQLite outbox/history/api_key hoc duoc tu Odoo - la secret)
+var/
+var_dev/
+var_bak_*/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Virtualenv (venv chua duong dan tuyet doi cua may goc, khong dung lai duoc)
+venv/
+venv_linux/
+.venv/
+
+# Serena MCP local cache/config (per-machine, khong can versioning)
+.serena/
