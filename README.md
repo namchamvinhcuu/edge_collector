@@ -1,237 +1,277 @@
 # PCM Edge Collector
 
-Edge collector thật (FastAPI) cho `pcm_base` — cai duoc noi voi README goc cua
-`pcm_ppd_pod` la con thieu ("아직 없는 것: 1. edge/collector (FastAPI)"). Chay tren
-mini-PC trong xuong, dung DUNG hop dong `/pcm/api/v1/edge/*` mo ta trong
-`pcm_base/controllers/ingest.py`.
+A small FastAPI service that runs on a mini-PC on the shop floor and bridges
+industrial data sources (PLC/OPC UA, Modbus, serial scales/calipers, MQTT, or
+a built-in simulator) to an Odoo "Main" server, following the `pcm_base`
+edge/device/channel contract (`/pcm/api/v1/edge/*`).
 
-## Kien truc
+It is offline-first: every reading goes through a local SQLite outbox before
+it is sent, and a network outage to Main only delays delivery — it never
+drops data.
+
+## Architecture
 
 ```
-[PLC/OPC UA]  [Modbus TCP/RTU]  [Serial (can, caliper)]  [MQTT]  [sim]
-      \             |                  |                  |      /
-       \            |                  |                  |     /
-        +-----  edge_collector/manager.py (SourceManager) -----+
+[PLC/OPC UA]  [Modbus TCP/RTU]  [Serial (scale, caliper)]  [MQTT]  [sim]
+      \             |                  |                    |      /
+       \            |                  |                    |     /
+        +-----  edge_collector/manager.py (SourceManager)  -----+
                           |
-              scheduler.py (EdgeAgent) -- outbox SQLite -- odoo_client.py
+              scheduler.py (EdgeAgent) -- outbox (SQLite) -- odoo_client.py
                           |                                        |
-                  inbound_api.py (FastAPI)              /pcm/api/v1/edge/*
-                  /api/command /api/latest                        |
-                  /api/browse /api/source/test                    v
-                  /api/stats  <-- Odoo goi vao          [Odoo Main / pcm_base]
+                  inbound_api.py (FastAPI)                /pcm/api/v1/edge/*
+                  /api/command  /api/latest                        |
+                  /api/browse   /api/source/test                   v
+                  /api/stats    <-- Main calls IN          [Odoo Main / pcm_base]
+                          ^
+                          |
+                  node_api.py (FastAPI, /node/v1/*)
+                          |
+              [Node / Pi-bridge / PC-bridge, HTTP device]
 ```
 
-- **edge -> Odoo** (`odoo_client.py`, `scheduler.py`): `hello` (30s) dang ky/song
-  con, `edge/config` keo cau hinh (co debounce `EDGE_CONFIG_DEBOUNCE_S` giong
-  bai hoc thuc te — sua config don dap khong lam driver restart lien tuc),
-  `measurements` gui theo lo moi `EDGE_SUBMIT_INTERVAL_S` giay/serial (dedup
-  bang `(serial, bid, seq)`, `bid` = boot_id co dinh, `seq` tang dan luu trong
-  SQLite nen SONG SOT qua restart), `heartbeat` moi thiet bi, `print_jobs/next`
-  + `ack` cho hang doi in.
-- **Odoo -> edge** (`inbound_api.py`): `pcm_base/tools/edge_client.py` goi vao
-  day khi nguoi dung bam nut tren man hinh (zero/tare, xem gia tri moi nhat,
-  duyet tag, test ket noi, xem thong ke). Header `X-Edge-Code` duoc doi chieu
-  nhung KHONG chan cung neu thieu — dung nguyen thiet ke goc (chi tin cay
-  trong LAN). **Tu chan tuong lua cong nay, dung de lo ra Internet.**
-- **node -> edge** (`node_api.py`): hop dong RIENG (khong thuoc pcm_base) cho
-  thiet bi `kind=http_node` (Pi/PC bridge) tu day HTTP — xem `../node_agent/`
-  (chuong trinh tham chieu chay tren node). Node khong the bi goi nguoc (chi
-  outbound), nen lenh tu Odoo (`/api/command`) duoc XEP HANG cho node tu poll
-  qua `GET /node/v1/commands` roi ACK lai — `manager.py` giu hang doi nay.
-- **Offline-first**: moi lo do di qua `store.py` (SQLite `outbox`) truoc khi
-  thu gui — mat mang toi Main chi lam cham, khong mat du lieu. Lich su gia tri
-  cung nam o SQLite cuc bo (`history`), dung Odoo chi giu snapshot `last_*`
-  (dung thiet ke PCM: "이력은 엣지 SQLite 에").
+- **edge → Main** (`odoo_client.py`, `scheduler.py`): `hello` (liveness +
+  self-registration), `edge/config` (pulls source/device/channel config,
+  debounced so a config edit doesn't restart drivers on every keystroke),
+  `measurements` (batched, deduplicated by `(serial, boot_id, seq)` so a
+  retried batch is never double-counted), `heartbeat` per device, and a
+  print-job queue (`print_jobs/next` + `ack`).
+- **Main → edge** (`inbound_api.py`): synchronous calls Main makes back into
+  this edge when an operator clicks a button on screen — zero/tare a scale,
+  read the latest value, browse OPC UA/Modbus tags, test a source
+  connection, or fetch local stats. **This port is LAN-trust only — put it
+  behind a firewall, never expose it to the public Internet.**
+- **node → edge** (`node_api.py`): a separate, edge-defined contract for
+  devices that report over plain HTTP (a Raspberry Pi or PC acting as a
+  bridge for sensors it reads locally). A node never talks to Main directly
+  — it only talks to its edge, and it can only be *polled*, never called
+  back into, so commands issued from Main are queued here until the node
+  polls for them. See [Node contract](#node-contract-nodev1) below if you
+  want to write your own client for this API — no reference implementation
+  ships in this repository.
+- **Offline-first**: every reading passes through `store.py`'s SQLite
+  `outbox` before a send is attempted; losing the connection to Main only
+  slows delivery down, it never loses data. Recent history is also kept
+  locally (`history` table, used by `/api/latest` and `/api/stats`) — Main
+  only ever holds the latest snapshot per channel.
 
-## Cai dat
+## Requirements
 
-Yeu cau **Python >= 3.10** (da smoke-test tren 3.12).
+- Python **3.10+** (tested on 3.12), or Docker.
+- An Odoo instance implementing the `pcm_base` edge contract described in
+  [Odoo/Main API contract](#odoomain-api-contract) — this repository does
+  not include that Odoo module.
+
+## Quick start (venv)
 
 ```bash
-python -m venv .venv && . .venv/bin/activate   # hoac .venv\Scripts\activate tren Windows
+git clone https://github.com/namchamvinhcuu/pcm-edge-collector.git
+cd pcm-edge-collector
+python -m venv .venv && . .venv/bin/activate   # .venv\Scripts\activate on Windows
 pip install -r requirements.txt
-cp .env.example .env      # roi sua EDGE_MAIN_URL, EDGE_CODE, EDGE_BASE_URL...
+cp .env.example .env      # then edit EDGE_MAIN_URL, EDGE_CODE, EDGE_BASE_URL...
 python -m edge_collector
 ```
 
-### Cau hinh qua trinh duyet (thay vi sua .env bang tay)
+The service listens on `EDGE_LISTEN_PORT` (default `8000`).
 
-Sau khi `edge_collector` da chay, mo `http://<dia-chi-edge>:<EDGE_LISTEN_PORT>/setup`
-(vd `http://localhost:8000/setup`) de xem/sua toan bo bien trong `.env` bang form web
-thay vi sua file tay. Trang ghi thang vao `.env` (`python-dotenv`, giu nguyen
-comment/dong khac), validate URL/port/interval truoc khi luu. **Cac gia tri anh
-huong port/interval/state_dir da nap vao tien trinh luc khoi dong — sua qua
-`/setup` xong van phai KHOI DONG LAI `edge_collector` (`python -m edge_collector`)
-moi ap dung**, trang chi ghi file, khong tu restart. Cung muc do tin cay LAN nhu
-`inbound_api.py` — dung dua ra Internet.
+### Configuring through the browser instead of hand-editing `.env`
 
-### Chay bang Docker (thay vi tu tao venv)
+Once `edge_collector` is running, open
+`http://<edge-address>:<EDGE_LISTEN_PORT>/setup` (e.g.
+`http://localhost:8000/setup`) to view and edit every `.env` value from a web
+form instead of editing the file by hand. The page writes straight to `.env`
+(preserving comments/other lines) and validates URLs/ports/intervals before
+saving.
+
+Most fields are applied **immediately** on save (no restart needed) —
+**Listen host**, **Listen port**, and **State directory** are the exception
+(they require restarting `edge_collector`, since the listening socket and
+the local SQLite store are opened once at startup); the page marks those
+three fields clearly.
+
+## Running with Docker
 
 ```bash
-cp .env.example .env      # sua EDGE_MAIN_URL, EDGE_CODE, EDGE_BASE_URL...
+cp .env.example .env      # edit EDGE_MAIN_URL, EDGE_CODE, EDGE_BASE_URL...
 docker compose up -d --build
 ```
 
-**Quan trong: phai `cp .env.example .env` TRUOC khi `docker compose up`** — neu
-quen buoc nay, Docker se tu tao 1 THU MUC RONG ten `.env` (vi khong tim thay
-file de bind-mount) thay vi bao loi ro rang; trieu chung se la loi kho hieu
-(`IsADirectoryError`) khi app co mo `.env`. Gap phai truong hop nay: xoa thu
-muc `.env/` rong do, tao lai dung 1 FILE `.env`, roi `docker compose up` lai.
+**You must `cp .env.example .env` before `docker compose up`** — otherwise
+Docker will silently create an empty *directory* named `.env` (since there
+is nothing to bind-mount), and the app will fail with a confusing
+`IsADirectoryError`. If that happens: remove the empty `.env/` directory,
+create a real `.env` file, then run `docker compose up` again.
 
-`docker-compose.yml` mount `./.env` vao `/app/.env` trong container (BAT BUOC
-mount file that, khong chi dung `-e`/`environment:` don le - trang `/setup`
-doc gia tri hien thi TU FILE `.env`, khong doc bien moi truong runtime, nen
-neu khong mount file thi `/setup` se hien mac dinh thay vi gia tri dang chay
-that) va 1 volume `edge_data` cho `/data` (SQLite outbox/history - PHAI la
-volume de khong mat du lieu offline-first khi container restart/recreate).
-Sua cau hinh qua `http://localhost:8000/setup` roi `docker compose restart`
-de ap dung (giong lai voi ban chay tay: chi ghi file, khong tu restart).
+`docker-compose.yml` mounts `./.env` into `/app/.env` inside the container
+(mounting the real file matters — the `/setup` page reads directly from the
+file on disk, not from the container's environment variables) and a named
+volume `edge_data` for `/data` (the SQLite outbox/history — must be a
+volume so offline-first data survives a container restart/recreate).
+Configure through `http://localhost:8000/setup`, then
+`docker compose restart` to apply anything not covered by hot-reload
+(see above).
 
-**Rieng field "State directory" tren `/setup` la NO-OP khi chay bang Docker** -
-`Dockerfile` set san `ENV EDGE_STATE_DIR=/data`, va `python-dotenv` mac dinh
-KHONG ghi de bien da co san trong environment (`override=False`) — nen du sua
-"State directory" qua form roi restart, SQLite van luu vao `/data` (dung, giu
-nguyen tinh nang offline-first), gia tri ban nhap KHONG co tac dung gi. Muon
-doi noi luu that su, phai sua `EDGE_STATE_DIR`/volume trong `docker-compose.yml`
-roi `docker compose up -d --build` lai.
+If a source has `pcm.source.kind=serial` (a real device over USB/RS-232,
+not `sim`), you also need to pass through the physical port — uncomment the
+`devices:` section in `docker-compose.yml` and point it at your
+`/dev/ttyUSBx`.
 
-Neu `pcm.source.kind=serial` (thiet bi that qua USB/RS232, khong phai `sim`),
-can mount them cong vat ly - bo comment phan `devices:` trong
-`docker-compose.yml` va sua dung `/dev/ttyUSBx` cua may.
+**Publishing a port with Docker (`8000:8000`) goes through the
+`DOCKER`/`DOCKER-USER` iptables chains, not the `INPUT` chain that `ufw`
+manages** — if your mini-PC has multiple NICs and you rely on `ufw` to
+restrict which subnet can reach this port, Docker's port publishing will
+silently bypass that rule. To actually restrict it, add a rule to the
+`DOCKER-USER` chain yourself (e.g.
+`iptables -I DOCKER-USER -i <your-WAN-facing-NIC> -p tcp --dport 8000 -j DROP`)
+— unlike running via venv, where the process binds the NIC directly and
+`ufw` applies normally.
 
-**Publish port `8000:8000` di qua chain `DOCKER`/`DOCKER-USER` cua iptables,
-KHONG di qua chain `INPUT` ma `ufw` quan ly** — neu mini-PC co nhieu NIC va
-dang dua vao `ufw` de gioi han subnet duoc goi vao cong nay, publish port cua
-Docker se BO QUA rule `ufw` do. Muon gioi han that, phai tu them rule vao
-chain `DOCKER-USER` (vd `iptables -I DOCKER-USER -i <ten-NIC-huong-WAN> -p tcp
---dport 8000 -j DROP`), khong the chi dua vao `ufw` nhu khi chay bang venv
-(venv-mode bind thang NIC, tuan theo `ufw` binh thuong).
-
-Build tay khong qua compose:
+Building/running without compose:
 ```bash
 docker build -t edge_collector .
 docker run -d --name edge_collector -p 8000:8000 \
   -v "$(pwd)/.env:/app/.env" -v edge_data:/data edge_collector
 ```
 
-### Cai tay bang venv (khong dung Docker)
+## Registering an edge in Odoo
 
-**Venv tao tren mot may (Windows/Linux khac nhau) KHONG dung lai duoc tren
-may khac** — `venv/` chua duong dan binary tuyet doi cua may goc. Doi may
-(vd .env soan tren Windows, chay lai tren Linux dev) thi tao venv MOI, dung
-xoa/ghi de venv cu (giu lai de doi chieu):
+On Main, create (or let it self-register on first `hello`) a `pcm.edge`
+record whose `code` matches `EDGE_CODE`, with `base_url` set to this
+process's LAN address (`EDGE_BASE_URL`, e.g. `http://10.10.1.50:8000`).
+A newly self-registered edge starts in a "pending approval" state and won't
+have its measurements accepted until approved on the Main side.
 
-```bash
-python3 -m venv venv_linux
-./venv_linux/bin/pip install -r requirements.txt
-./venv_linux/bin/python -m edge_collector
-```
+## Configuring sources (no code changes needed)
 
-Ben Odoo: vao **PCM > Ket noi thiet bi > Edge**, tao (hoac de tu dang ky qua
-`hello`) mot `pcm.edge` voi `code` **trung voi `EDGE_CODE`**, dat `base_url`
-la dia chi LAN cua tien trinh nay (`EDGE_BASE_URL`, vd `http://10.10.1.50:8000`).
-Bam **[Duyet]** — tu do edge moi nhan gia tri. Duyet nhanh qua Odoo shell
-(dev, khong can mo UI):
+All of `pcm.source` / `pcm.device` / `pcm.channel` / `pcm.serial.profile` /
+`pcm.printer` are declared on the Odoo side. The edge pulls them via
+`GET /pcm/api/v1/edge/config` and starts the matching driver by `kind`:
 
-```bash
-$VENV_PY $ODOO_BIN shell -c odoo.conf -d <db> --no-http <<'EOF'
-edge = env['pcm.edge'].sudo().search([('code','=','EDGE-1')], limit=1)
-edge.action_approve()
-env.cr.commit()
-EOF
-```
-
-### Test tren 1 may (dev local, khong can thiet bi/edge that)
-
-Da verify THAT (khong phai doan) theo trinh tu nay — chay Odoo dev + edge
-+ node CUNG mot may:
-
-1. `EDGE_LISTEN_PORT` mac dinh **8000** — kiem tra port TRONG truoc khi chay
-   (`ss -ltnp | grep :8000` hoac `curl localhost:8000/healthz`), doi sang
-   port khac (vd `8090`) neu da bi chiem boi project khac tren cung may.
-   Nho doi luon `EDGE_BASE_URL` (nguoi/service khac goi nguoc vao) va bien
-   `NODE_EDGE_URL` ben `../node_agent/.env` cho khop port moi.
-2. `EDGE_MAIN_URL` tro ve `http://localhost:<http_port_cua_Odoo_dev>` (vd
-   `18013`) thay vi may LAN that.
-3. Edge/device **MOI hoan toan** (code/serial chua tung dang ky) se tu tao
-   ban ghi `state=new` qua `hello()`/`measurements()` — **chi hoat dung
-   dung tu Odoo 2026-09-16 tro di**: ban `pcm_base` cu hon co bug crash
-   HTTP 500 khi tu dang ky lan dau (`message_post()` trong route
-   `auth='none'` doc `env.user` rong — xem
-   `.obsidian-vault/Fix-History/2026-09-16-ingest-auth-none-message-post-expected-singleton.md`
-   va skill dung chung `Skill-Odoo-Auth-None-Route-Needs-With-User` trong
-   `.odoo-skill/`). Neu gap 500 o `hello()`/`measurements()` voi edge/device
-   MOI → kiem tra `pcm_base` da co fix nay chua truoc khi nghi ngo cau
-   hinh.
-4. State cu (`EDGE_STATE_DIR`, mac dinh `./var`) giu `api_key` da hoc tu
-   lan dang ky TRUOC — neu doi sang Odoo Main KHAC (vd tu LAN sang dev
-   local) ma DB do chua biet key nay, `hello`/`measurements` se bi tu choi
-   cho toi chu ky `hello` ke tiep (toi da 1 vong `EDGE_HELLO_INTERVAL_S`).
-   Muon sach hoan toan: doi `EDGE_STATE_DIR` sang thu muc moi (vd `./var_dev`)
-   thay vi xoa `var/` cu (giu lai de doi chieu neu can quay lai Main cu).
-5. Da verify end-to-end that: `node_agent` (kenh `mode: sim`) → edge_collector
-   (venv Linux, port doi) → Odoo dev that — `hello`/`config`/`source_status`/
-   `measurements`/`print_jobs/next` deu tra 200, gia tri toi `pcm.channel`
-   dung realtime (xem chi tiet trong Fix-History o tren).
-
-## Cau hinh nguon (khong sua code)
-
-Toan bo `pcm.source` / `pcm.device` / `pcm.channel` / `pcm.serial.profile` /
-`pcm.printer` khai bao BEN ODOO (man hinh PCM). Edge tu keo ve qua
-`GET /pcm/api/v1/edge/config` va tu khoi dong dung driver theo `kind`:
-
-| `pcm.source.kind` | Driver | Thu vien | Ghi chu |
+| `pcm.source.kind` | Driver | Library | Notes |
 |---|---|---|---|
-| `sim` | `drivers/sim.py` | - | Tao song gia (test duong ong, khong lien quan `pcm.simulator`) |
-| `serial` | `drivers/serial_ascii.py` | `pyserial`, `pymodbus` | Theo `pcm.serial.profile` (`link=ascii` hoac `link=modbus`) |
-| `modbus_tcp` / `modbus_rtu` | `drivers/modbus.py` | `pymodbus` (async) | Dia chi kieu Modicon `HR40001`/`IR30001` hoac so nguyen tran |
-| `opcua` | `drivers/opcua.py` | `asyncua` | Subscribe theo `channel.source_tag`; xem GIOI HAN ben duoi |
-| `mqtt` | `drivers/mqtt.py` | `paho-mqtt` | Tu suy ma kenh tu topic neu payload khong co khoa `ch` |
-| `edge` / `http_node` | (khong co driver) | - | Nguon tu bao cao (chinh edge nay / node tu day HTTP) |
+| `sim` | `drivers/sim.py` | - | Generates fake waveforms (pipeline testing) |
+| `serial` | `drivers/serial_ascii.py` | `pyserial`, `pymodbus` | Driven by `pcm.serial.profile` (`link=ascii` or `link=modbus`) |
+| `modbus_tcp` / `modbus_rtu` | `drivers/modbus.py` | `pymodbus` (async) | Modicon-style addresses (`HR40001`/`IR30001`) or plain integers |
+| `opcua` | `drivers/opcua.py` | `asyncua` | Subscribes by `channel.source_tag`; see known limitations below |
+| `mqtt` | `drivers/mqtt.py` | `paho-mqtt` | Guesses the channel from the topic if the payload has no `ch` key |
+| `edge` / `http_node` | (no driver) | - | Self-reported source (this edge itself, or a node pushing over HTTP) |
 
-## Gioi han da biet (can bo sung truoc khi dua vao san xuat that)
+## Odoo/Main API contract
 
-1. **OPC UA Sign/Sign&Encrypt**: `pcm.source.cert_id` (chung chi) khong duoc
-   `pcm_source._as_config()` gui ve edge — hien tai `opcua.py` chi ket noi
-   duoc `security_mode=none` hoac userpass tren keonh khong ma hoa. Muon dung
-   thuc, can them duong API rieng de edge tai chung chi (hoac dinh kem trong
-   `edge_config()`).
-2. **Camera** (`channel.stream_url/capture_url`): nam o node (Pi), khong phai
-   o edge — collector nay KHONG serve snapshot/stream, chi la ha tang do/ghi
-   gia tri. Xem `04_Camera_Integration_Guide...docx` cho phan node rieng.
-3. **May in `usb://`**: `printer.py` chi gui duoc `tcp://host:port` (Zebra/
-   ESC-POS co card mang). May in USB cam thang vao edge can driver rieng theo
-   HDH (chua lam).
-4. **MQTT auto-detect topic**: khi payload khong phai JSON co khoa `ch`, ma
-   kenh duoc doan tu duoi topic — kiem tra lai cho dung quy uoc cua he thong
-   MQTT thuc te truoc khi dung.
-5. Da smoke-test toan bo vong doi voi driver `sim` (start/apply_config/
-   emit/outbox/tat ca route inbound) VA voi `node_agent` that qua HTTP that
-   (khong mock) — bao gom ca vong lenh Odoo→edge→node→ack. **Da verify THAT
-   voi Odoo Main that (khong con la gia lap)**: chay `pcmppdpod_dev` local +
-   edge_collector + node_agent cung may, tu dang ky edge/device MOI, duyet
-   qua Odoo shell, gia tri sim toi `pcm.channel` dung — xem muc "Test tren
-   1 may" o tren. CHUA test voi PLC/Modbus/OPC UA/MQTT that (khong co thiet
-   bi that de kiem trong moi truong nay). Kiem tra ky truoc khi noi vao
-   thiet bi that, dac biet lenh GHI (`command`/`write`).
+If you want to implement your own "Main" server instead of using `pcm_base`,
+this is the exact contract `odoo_client.py` speaks. All requests carry
+`X-Edge-Code: <EDGE_CODE>`, plus `X-API-Key: <key>` once one has been
+issued (every response is a JSON object; on error, `edge_collector` treats
+any non-2xx or malformed body as `{"ok": false, "error": "..."}`).
 
-## Cau truc thu muc
+| Method & path | Purpose | Request body (JSON) |
+|---|---|---|
+| `POST /pcm/api/v1/edge/hello` | Liveness + self-registration/key issuance | `{code, name, platform, base_url, version, lag, forward_state, mqtt_connected, config_version, api_key: null on first call}` → response includes `api_key` once granted |
+| `POST /pcm/api/v1/edge/config` | Pull source/device/channel config | `{config_version}` → response `{ok, config: {...}}` |
+| `POST /pcm/api/v1/edge/source_status` | Report per-source health | `{sources: [...], mqtt_connected}` |
+| `POST /pcm/api/v1/measurements` | Push a batch of readings | `{serial, items: [{ch, v, s, q, stable, ts}], bid, seq}` — dedupe key is `(serial, bid, seq)` |
+| `POST /pcm/api/v1/heartbeat` | Per-device liveness | `{serial, ...device-reported fields}` |
+| `GET /pcm/api/v1/print_jobs/next` | Poll for a queued print job | — |
+| `POST /pcm/api/v1/print_jobs/ack` | Acknowledge a print job | `{id, ok, detail}` |
+
+### Node contract (`/node/v1/*`)
+
+This is a **separate, edge-defined** contract (not part of `pcm_base`) for
+devices that report over plain HTTP instead of running a driver directly on
+the edge — typically a Raspberry Pi or a PC acting as a bridge. It is
+served by this same process (`node_api.py`). Every request needs
+`X-Device-Serial`; `X-API-Key` is only required on data routes once the
+edge has actually been told a key for that serial by Main (a node learns
+its key via `/hello`, the one route that never rejects a *missing* key —
+only an explicitly wrong one, so a brand-new device can bootstrap).
+
+| Method & path | Purpose | Request body (JSON) |
+|---|---|---|
+| `POST /node/v1/hello` | Learn/refresh the API key for this serial | — → `{ok, known, api_key, server_time_ms}` |
+| `POST /node/v1/measurements` | Push readings (same shape edge→Main uses) | `{items: [{ch, v, s, q, ts, stable}], bid, seq}` |
+| `POST /node/v1/heartbeat` | Liveness | `{fw, ip, uptime_s, rssi, buffered, ...}` |
+| `GET /node/v1/commands` | Poll for a queued command (zero/tare/...) | — |
+| `POST /node/v1/commands/ack` | Acknowledge a command | `{id, ok, detail}` |
+| `GET /node/v1/config` | Optional: fetch this device's channel labels/units | — |
+
+A node can never be called back into — it can only poll — so any command
+issued from Main for a node-backed device is queued on the edge
+(`manager.py`) until the node's next `GET /node/v1/commands`.
+
+## Known limitations (before going to production)
+
+1. **OPC UA Sign/Sign&Encrypt**: `pcm.source.cert_id` (a certificate) is not
+   forwarded to the edge by the Main side's `pcm_source._as_config()` —
+   `opcua.py` currently only connects with `security_mode=none` or
+   userpass over an unencrypted channel. Real certificate-based security
+   needs a dedicated endpoint for the edge to fetch the cert (or embedding
+   it in `edge_config()`).
+2. **Camera** (`channel.stream_url`/`capture_url`) lives on the node (a Pi),
+   not on the edge — this collector does not serve snapshots/streams, it
+   only handles measurement I/O.
+3. **USB printers**: `printer.py` only sends to `tcp://host:port`
+   (network-attached Zebra/ESC-POS printers). A USB-attached printer needs
+   its own OS-specific driver (not implemented).
+4. **MQTT auto-detected topics**: when a payload isn't JSON with a `ch`
+   key, the channel is guessed from the topic's last path segment — double
+   check this matches your real MQTT naming convention before relying on
+   it.
+5. The `sim` driver's full lifecycle (start/apply_config/emit/outbox/every
+   inbound route) and the node contract have been exercised end-to-end
+   against a real Odoo instance. PLC/Modbus/OPC UA/MQTT against **real**
+   hardware have not — test carefully before wiring up real equipment,
+   especially any write command (`command`/`write`).
+
+## Project layout
 
 ```
 edge_collector/
-  config.py        # doc .env
-  store.py          # SQLite: kv, seq, outbox, history
-  odoo_client.py     # goi VAO Odoo (/pcm/api/v1/edge/*)
-  manager.py         # nap config, dieu phoi driver theo pcm.source
-  scheduler.py        # EdgeAgent: hello/config/flush/sender/heartbeat/print/gc loop
-  inbound_api.py       # Odoo -> edge (/api/command,/api/latest,/api/browse,/api/source/test,/api/stats)
-  node_api.py          # node -> edge (/node/v1/*), rieng cua edge_collector
-  settings_api.py      # trang web /setup, sua .env qua trinh duyet
-  printer.py           # gui ZPL/ESC-POS qua tcp://
-  app.py               # FastAPI app + lifespan
+  config.py          # reads .env, exposes the `settings` singleton (hot-reloadable)
+  store.py           # SQLite: kv, seq, outbox, history
+  odoo_client.py      # calls OUT to Main (/pcm/api/v1/edge/*)
+  manager.py          # loads config, drives sources by pcm.source.kind
+  scheduler.py         # EdgeAgent: hello/config/flush/sender/heartbeat/print/gc loops
+  inbound_api.py        # Main -> edge (/api/command,/api/latest,/api/browse,/api/source/test,/api/stats)
+  node_api.py           # node -> edge (/node/v1/*), edge-defined contract
+  settings_api.py       # the /setup web page for editing .env from a browser
+  printer.py            # sends ZPL/ESC-POS over tcp://
+  app.py                # FastAPI app + lifespan
   drivers/
     base.py sim.py serial_ascii.py modbus.py opcua.py mqtt.py
+tests/                  # pytest suite (settings_api, config hot-reload)
 ```
 
-Xem `../node_agent/README.md` cho chuong trinh chay tren Pi/PC-bridge dung
-hop dong `/node/v1/*` noi tren.
+## Configuration reference
+
+All values below are set in `.env` (copy from `.env.example`) or through
+the `/setup` web page.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `EDGE_MAIN_URL` | `http://localhost:8069` | Root URL of Odoo Main |
+| `EDGE_CODE` | auto-generated | Must match `pcm.edge.code` on Main; leave blank to auto-generate on first run |
+| `EDGE_NAME` | (empty) | Display name Main assigns on first self-registration |
+| `EDGE_PLATFORM` | `other` | `ubuntu` \| `windows` \| `other` |
+| `EDGE_BASE_URL` | (empty) | This edge's own LAN address, so Main/a tablet can call back into it |
+| `EDGE_LISTEN_HOST` | `0.0.0.0` | Interface this edge listens on *(requires restart)* |
+| `EDGE_LISTEN_PORT` | `8000` | Port this edge listens on *(requires restart)* |
+| `EDGE_STATE_DIR` | `./var` | SQLite outbox/history/api-key cache *(requires restart)* |
+| `EDGE_HELLO_INTERVAL_S` | `30` | Liveness/registration interval |
+| `EDGE_HEARTBEAT_INTERVAL_S` | `30` | Per-device heartbeat interval |
+| `EDGE_CONFIG_POLL_INTERVAL_S` | `30` | How often to pull source/device/channel config |
+| `EDGE_PRINT_POLL_INTERVAL_S` | `3` | Print-job queue poll interval |
+| `EDGE_SUBMIT_INTERVAL_S` | `2` | How often buffered readings are batched into the outbox |
+| `EDGE_CONFIG_DEBOUNCE_S` | `10` | Delay before applying a config change (avoids restarting drivers on every edit) |
+
+## Running the tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+## License
+
+No license file is included yet — all rights reserved by default until one
+is added. Open an issue if you'd like to use this under a specific license.
