@@ -19,3 +19,9 @@ venv_linux/
 
 # Serena MCP local cache/config (per-machine, khong can versioning)
 .serena/
+.claude/
+.gemini/
+
+# CLAUDE.md = symlink per-machine -> sync qua claude-agents (khong commit)
+/CLAUDE.md
+CLAUDE.md
