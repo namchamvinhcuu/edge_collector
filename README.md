@@ -103,6 +103,15 @@ is nothing to bind-mount), and the app will fail with a confusing
 `IsADirectoryError`. If that happens: remove the empty `.env/` directory,
 create a real `.env` file, then run `docker compose up` again.
 
+**The container runs as non-root uid 1000 ("edge")** — since `/setup` writes
+straight back to the bind-mounted `.env` file, that file must be writable by
+uid 1000 on the host: `chown 1000:1000 .env` is the reliable fix regardless
+of which user created the file (`chmod 664` only helps if your host user
+already happens to be uid/gid 1000 - true by luck on a single-user Linux
+desktop, not guaranteed on a server or CI-provisioned box). If it isn't
+writable, saving from `/setup` will show a clear "Could not write .env" error
+banner (instead of a silent failure) — fix the permission and save again.
+
 `docker-compose.yml` mounts `./.env` into `/app/.env` inside the container
 (mounting the real file matters — the `/setup` page reads directly from the
 file on disk, not from the container's environment variables) and a named
@@ -110,7 +119,11 @@ volume `edge_data` for `/data` (the SQLite outbox/history — must be a
 volume so offline-first data survives a container restart/recreate).
 Configure through `http://localhost:8000/setup`, then
 `docker compose restart` to apply anything not covered by hot-reload
-(see above).
+(see above) - **except `EDGE_LISTEN_PORT`: changing that one needs
+`docker compose up -d` (recreate), not `restart`**, since the container's
+port mapping and the `EDGE_LISTEN_PORT` value the HEALTHCHECK reads are both
+fixed at container-creation time from `.env`, not re-read by an in-place
+`restart`.
 
 If a source has `pcm.source.kind=serial` (a real device over USB/RS-232,
 not `sim`), you also need to pass through the physical port — uncomment the

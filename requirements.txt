@@ -1,10 +1,16 @@
-fastapi>=0.110
-uvicorn[standard]>=0.27
-httpx>=0.27
-pydantic>=2.5
-python-dotenv>=1.0
-python-multipart>=0.0.9
-pyserial>=3.5
-pymodbus>=3.6
-asyncua>=1.1
-paho-mqtt>=1.6,<2.0
+# Pin CHINH XAC (khong ">=") de build reproducible giua cac site khach hang/
+# thoi diem khac nhau - tranh rebuild image keo ve minor/major version moi hon
+# co the doi behavior (dac biet fastapi/pydantic hay breaking giua minor) ma
+# khong ai hay - xem docker-reviewer 2026-09-17. Nang version: doi tay 1 dong
+# + chay lai `venv_linux/bin/python -m pytest tests/ -v` xac nhan van PASS
+# TRUOC khi commit, khong bump hang loat khong test.
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+httpx==0.28.1
+pydantic==2.13.5
+python-dotenv==1.2.3
+python-multipart==0.0.32
+pyserial==3.5
+pymodbus==3.15.0
+asyncua==2.0.1
+paho-mqtt==1.6.1

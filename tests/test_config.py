@@ -36,6 +36,25 @@ def test_settings_reload_ignores_restart_required_keys(monkeypatch):
     assert config.settings.state_dir == original_state_dir
 
 
+def test_settings_config_field_forwarded_allow_ips_default_and_restart_required(monkeypatch):
+    """Regression cho fix CSRF false-reject qua reverse-proxy (xem review
+    2026-09-17): field moi EDGE_FORWARDED_ALLOW_IPS phai (1) co default dung
+    y het uvicorn ("127.0.0.1,::1" - chi trust loopback, khong doi hanh vi
+    LAN-only hien tai), (2) nam trong RESTART_REQUIRED_KEYS (uvicorn.run() chi
+    doc gia tri nay 1 lan luc khoi dong), va (3) KHONG bi Settings.reload()
+    dung toi - doi field nay sau khi process da chay khong co tac dung gi,
+    chi gay hieu lam."""
+    assert config.Settings().forwarded_allow_ips == "127.0.0.1,::1"
+    assert "EDGE_FORWARDED_ALLOW_IPS" in config.RESTART_REQUIRED_KEYS
+
+    original = config.settings.forwarded_allow_ips
+    monkeypatch.setenv("EDGE_FORWARDED_ALLOW_IPS", "10.0.0.5")
+
+    config.settings.reload()
+
+    assert config.settings.forwarded_allow_ips == original
+
+
 def test_settings_reload_keeps_edge_code_when_env_var_blank(monkeypatch):
     """os.environ.get('EDGE_CODE') tra ve '' (rong, KHONG PHAI None) khi bien
     co ton tai nhung gia tri rong - '' or self.edge_code phai fall qua nhanh

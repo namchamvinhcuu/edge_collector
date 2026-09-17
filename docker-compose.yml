@@ -11,6 +11,17 @@ services:
       # project/container KHAC tren may chiem - kiem tra `docker ps` / `ss -ltnp`
       # roi doi EDGE_LISTEN_PORT trong .env sang port trong.
       - "${EDGE_LISTEN_PORT:-8000}:${EDGE_LISTEN_PORT:-8000}"
+    environment:
+      # HEALTHCHECK (Dockerfile) chay trong 1 tien trinh `docker exec` RIENG
+      # do dockerd spawn dinh ky - KHONG ke thua os.environ da bi PID 1 (app)
+      # mutate qua load_dotenv() luc runtime, chi ke thua environment table
+      # cua container tai thoi diem tao (ENV/compose environment:). Neu
+      # khong set o day, HEALTHCHECK se luon doc mac dinh 8000 du .env doi
+      # EDGE_LISTEN_PORT sang gia tri khac - da tai hien that bang container,
+      # xem docker-reviewer 2026-09-17. Doi port qua /setup xong PHAI
+      # `docker compose up -d` (recreate de compose doc lai .env) - `restart`
+      # (khong recreate) se KHONG ap dung gia tri moi cho bien nay.
+      - EDGE_LISTEN_PORT=${EDGE_LISTEN_PORT:-8000}
     volumes:
       - ./.env:/app/.env
       - edge_data:/data

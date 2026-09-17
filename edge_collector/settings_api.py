@@ -6,16 +6,32 @@
                   `settings` + base_url cua OdooClient dang chay (xem
                   config.reload_settings()/OdooClient.refresh_base_url())
 
-Cung muc do tin cay LAN nhu inbound_api.py - dung dua cong nay ra Internet, tu
-chan tuong lua/route rieng cho no. CHI 3 field (EDGE_LISTEN_HOST/PORT,
-EDGE_STATE_DIR - xem config.RESTART_REQUIRED_KEYS) van can KHOI DONG LAI
-edge_collector moi ap dung (socket da bind / SQLite da mo co dinh luc
-startup); 11 field con lai (Main URL/Edge code/Name/Platform/Base URL + 6
-interval) ap dung NGAY sau Save, khong can restart - xem review 2026-09-17
-(tinh nang hot-reload, phat sinh tu cau hoi thuc te cua Nam).
+Cung muc do tin cay LAN nhu inbound_api.py - mac dinh nham LAN, nhung co the
+dat sau reverse-proxy/tunnel (vd truy cap qua domain public) NEU cau hinh dung
+EDGE_FORWARDED_ALLOW_IPS (xem duoi). CHI 4 field (EDGE_LISTEN_HOST/PORT,
+EDGE_STATE_DIR, EDGE_FORWARDED_ALLOW_IPS - xem config.RESTART_REQUIRED_KEYS)
+van can KHOI DONG LAI edge_collector moi ap dung (socket da bind / SQLite da
+mo co dinh / uvicorn da doc gia tri nay luc startup); 11 field con lai (Main
+URL/Edge code/Name/Platform/Base URL + 6 interval) ap dung NGAY sau Save,
+khong can restart - xem review 2026-09-17 (tinh nang hot-reload, phat sinh tu
+cau hoi thuc te cua Nam).
+
+EDGE_FORWARDED_ALLOW_IPS: IP/CIDR cua reverse-proxy/tunnel duoc TIN de doc
+X-Forwarded-Proto/-Host, truyen thang cho uvicorn's ProxyHeadersMiddleware.
+Mac dinh "127.0.0.1,::1" (chi trust loopback, dung y het uvicorn) - KHONG
+doi hanh vi LAN-only hien tai. Neu /setup duoc truy cap qua 1 reverse-proxy/
+tunnel TLS-terminating (Origin browser la https:// nhung ket noi TCP toi
+uvicorn van la http://), _is_same_origin() ben duoi se so sai scheme (Origin
+https != request.url.scheme http) va reject nham request Save hop le - da
+gap thuc te 2026-09-17 (Nam tunnel /setup qua domain public). Fix: dat field
+nay dung IP/CIDR cua proxy/tunnel do (KHONG dat "*" tru khi da chan chac
+chan khong ai khac gui thang toi cong nay duoc, vi "*" se trust
+X-Forwarded-Proto tu BAT KY client nao, mo duong gia mao Origin qua header).
 """
 import html
+import ipaddress
 import math
+import time
 from pathlib import Path
 from typing import Dict, List
 from urllib.parse import urlsplit
@@ -63,6 +79,12 @@ _FIELDS = [
      "hint": "Port this edge listens on", "group": "network"},
     {"key": "EDGE_STATE_DIR", "label": "State directory", "default": "./var",
      "hint": "SQLite outbox / history / api_key cache", "group": "network"},
+    {"key": "EDGE_FORWARDED_ALLOW_IPS", "label": "Trusted reverse-proxy IPs",
+     "default": "127.0.0.1,::1",
+     "hint": "Comma-separated IPs/CIDRs allowed to set X-Forwarded-Proto/-Host "
+             "- set to your reverse-proxy/tunnel's address if /setup is reached "
+             "through one (fixes CSRF false-reject over HTTPS tunnels)",
+     "group": "network"},
     {"key": "EDGE_HELLO_INTERVAL_S", "label": "Hello interval (s)", "default": "30",
      "hint": "Register / renew liveness with Odoo", "group": "timing"},
     {"key": "EDGE_HEARTBEAT_INTERVAL_S", "label": "Heartbeat interval (s)", "default": "30",
@@ -127,7 +149,9 @@ body {
   background: var(--bg); color: var(--fg);
   margin: 0; padding: 40px 20px 80px; line-height: 1.5;
 }
-.wrap { max-width: 760px; margin: 0 auto; }
+.layout { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 760px 1fr; gap: 24px; align-items: start; }
+@media (max-width: 1080px) { .layout { grid-template-columns: 1fr; max-width: 760px; } }
+.wrap { max-width: none; margin: 0; }
 h1 { font-size: 1.5rem; font-weight: 700; margin: 0 0 4px; }
 .lede { color: var(--muted-fg); font-size: 0.9rem; margin: 0 0 12px; }
 .notice {
@@ -180,7 +204,56 @@ button[type=submit] {
 button[type=submit]:hover { filter: brightness(1.08); }
 button[type=submit]:active { transform: scale(.98); }
 button[type=submit]:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.activity {
+  border: 1px solid var(--card-border); border-radius: 12px; background: var(--card);
+  padding: 18px 20px; position: sticky; top: 20px; max-height: calc(100vh - 40px);
+  overflow: auto; min-width: 0;
+}
+.activity h2 { margin: 0 0 4px; font-size: 0.95rem; font-weight: 600; }
+.activity-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.activity-row { padding: 8px 10px; border-radius: 8px; background: var(--badge-bg); font-size: 0.8rem; }
+.activity-row.a-bad { border: 1px solid var(--danger-border); }
+.a-top { display: flex; justify-content: space-between; gap: 8px; font-weight: 500; }
+.a-age { color: var(--muted-fg); font-size: 0.72rem; white-space: nowrap; }
+.a-val { color: var(--muted-fg); margin-top: 2px; }
+.activity-empty { color: var(--muted-fg); font-size: 0.82rem; padding: 8px 0; margin: 12px 0 0; }
 """
+
+
+# Poll rieng /setup/activity (khong dung WebSocket - project chua co tien le,
+# polling JSON khop pattern san co /api/latest, /api/stats). esc() bat buoc
+# cho MOI truong tu dong node (serial/ch/gia tri chuoi 's') truoc khi noi vao
+# innerHTML - day la du lieu tu thiet bi ngoai (node_agent), khong phai
+# hang-code, phai coi la KHONG dang tin de tranh XSS luu tru qua history.
+_ACTIVITY_SCRIPT = """<script>
+(function(){
+  var list = document.getElementById('activity-list');
+  if (!list) return;
+  function esc(s){ var d=document.createElement('div'); d.textContent=String(s); return d.innerHTML; }
+  function fmtAge(s){
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.floor(s/60) + 'm ago';
+    return Math.floor(s/3600) + 'h ago';
+  }
+  function render(rows){
+    if (!rows.length) { list.innerHTML = '<li class="activity-empty">Waiting for data...</li>'; return; }
+    list.innerHTML = rows.map(function(r){
+      var bad = (r.q === 1 || r.q === 2) ? ' a-bad' : '';
+      var val = (r.v === null || r.v === undefined || r.v === '') ? (r.s || '') : r.v;
+      return '<li class="activity-row' + bad + '">'
+        + '<div class="a-top"><span>' + esc(r.serial) + ' / ' + esc(r.ch) + '</span>'
+        + '<span class="a-age">' + esc(fmtAge(r.age_s)) + '</span></div>'
+        + '<div class="a-val">' + esc(val) + '</div></li>';
+    }).join('');
+  }
+  function poll(){
+    fetch('/setup/activity').then(function(r){ return r.json(); })
+      .then(function(data){ render(data.rows || []); }).catch(function(){});
+  }
+  poll();
+  setInterval(poll, 3000);
+})();
+</script>"""
 
 
 def _current_values() -> dict:
@@ -275,6 +348,34 @@ def _validate(values: dict) -> Dict[str, List[str]]:
     port = values.get("EDGE_LISTEN_PORT", "")
     if port.isdigit() and not (1 <= int(port) <= 65535):
         add("EDGE_LISTEN_PORT", "Must be in the range 1-65535")
+    fwd_ips = values.get("EDGE_FORWARDED_ALLOW_IPS", "")
+    if fwd_ips and fwd_ips != "*":
+        # uvicorn's _TrustedHosts KHONG bao gio crash tren gia tri sai (roi
+        # ve "literal", khong bao gio khop client that - fail-closed an
+        # toan) nen truoc day sai chinh ta o day se IM LANG khong co tac
+        # dung gi, khong ai biet TAI SAO. Validate som de bao loi ngay luc
+        # Save thay vi phai tu suy doan sau khi restart - xem
+        # python-reviewer 2026-09-17.
+        for part in fwd_ips.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                # KHONG truyen strict=False - uvicorn's _TrustedHosts.__init__
+                # (proxy_headers.py) goi ipaddress.ip_network(host) MAC DINH
+                # strict=True. Neu validate o day long hon (strict=False), 1
+                # CIDR co host-bits-set (vd "10.0.0.5/24" thay vi dung
+                # "10.0.0.0/24") se PASS validate nhung uvicorn that lai rot
+                # ve ValueError -> coi la literal -> khong bao gio khop
+                # client that -> Save "thanh cong" nhung proxy KHONG duoc
+                # trust, tai dien chinh trieu chung CSRF false-reject ban dau
+                # ma finding nay sinh ra de chan - xem python-reviewer
+                # 2026-09-17 (vong 2, phat hien bang thuc nghiem).
+                ipaddress.ip_network(part)
+            except ValueError:
+                add("EDGE_FORWARDED_ALLOW_IPS",
+                    "Invalid IP/CIDR: %r (comma-separated IPs/CIDRs, or \"*\")" % part)
+                break
     return errors
 
 
@@ -350,6 +451,7 @@ def _render(values: dict, errors: "Dict[str, List[str]]" = None, saved: bool = F
 <style>%s</style>
 </head>
 <body>
+<div class="layout">
 <div class="wrap">
 <h1>Edge Collector Settings</h1>
 <p class="lede">Configure this edge without editing <code>.env</code> by hand.</p>
@@ -360,8 +462,15 @@ def _render(values: dict, errors: "Dict[str, List[str]]" = None, saved: bool = F
 <div class="actions"><button type="submit">Save</button></div>
 </form>
 </div>
+<aside class="activity" aria-label="Live activity">
+<h2>Live activity</h2>
+<p class="group-desc">Recent readings pushed by node_agent devices, updates every few seconds.</p>
+<ul class="activity-list" id="activity-list"><li class="activity-empty">Waiting for data...</li></ul>
+</aside>
+</div>
 %s
-</body></html>""" % (_CSS, _ICON_RESTART, banner, "".join(sections), focus_script)
+%s
+</body></html>""" % (_CSS, _ICON_RESTART, banner, "".join(sections), focus_script, _ACTIVITY_SCRIPT)
 
 
 def _is_same_origin(request: Request) -> bool:
@@ -383,6 +492,28 @@ def _is_same_origin(request: Request) -> bool:
 @router.get("/setup", response_class=HTMLResponse)
 async def setup_get():
     return _render(_current_values())
+
+
+@router.get("/setup/activity")
+async def setup_activity(request: Request):
+    """Nguon du lieu cho panel 'Live activity' - doc lai Store.history (da
+    duoc EdgeAgent._on_value ghi san moi lan node_agent day do len, xem
+    node_api.py/scheduler.py), KHONG mo kenh log rieng. store co the None
+    khi test dung FastAPI() tran (khong qua lifespan that) - tra rong an toan,
+    giong pattern agent=None o setup_post()."""
+    store = getattr(request.app.state, "store", None)
+    rows = store.history_recent(limit=50) if store is not None else []
+    now = time.time()
+    return {
+        "rows": [
+            {
+                "serial": r["serial"], "ch": r["ch"], "v": r["v"], "s": r["s"],
+                "q": r["q"], "stable": r["stable"],
+                "age_s": max(0, int(now - r["ts"])),
+            }
+            for r in rows
+        ]
+    }
 
 
 @router.post("/setup", response_class=HTMLResponse)
@@ -409,7 +540,21 @@ async def setup_post(request: Request):
         # da dang ky ben Odoo, dut ket noi im lang - xem review 2026-09-17
         # (tinh nang hot-reload).
         values["EDGE_CODE"] = settings.edge_code
-    _write_env_file(_ENV_PATH, values)
+    try:
+        _write_env_file(_ENV_PATH, values)
+    except OSError as exc:
+        # Container chay non-root (uid 1000, xem Dockerfile) - .env bind-mount
+        # tu host co the khong writable boi uid do (vd tao boi root/user
+        # khac). Khong bat se rot thanh 500 khong ro nghia; bat lai va tra
+        # loi ro rang HON de Nam biet phai chinh permission host, KHONG phai
+        # bug logic - xem docker-reviewer 2026-09-17.
+        return HTMLResponse(
+            _render(_current_values(),
+                    errors={"_form": ["Could not write .env: %s - check that this file "
+                                       "is writable by the container's uid 1000 (see "
+                                       "README, section 'Running with Docker')" % exc]}),
+            status_code=500,
+        )
     reload_settings(_ENV_PATH)
     # EdgeAgent/OdooClient chi ton tai khi chay qua app.py that (lifespan da
     # gan app.state.agent) - test dung FastAPI() tran nen khong co, bo qua an

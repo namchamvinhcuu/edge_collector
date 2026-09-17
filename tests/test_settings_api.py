@@ -275,3 +275,152 @@ def test_post_setup_skips_agent_refresh_when_absent(client):
     phai bo qua an toan (getattr default None), khong duoc crash 500."""
     resp = client.post("/setup", data=_valid_form())
     assert resp.status_code == 200
+
+
+def test_is_same_origin_rejects_when_scheme_mismatched(client):
+    """Regression cho bug CSRF false-reject qua reverse-proxy/tunnel (xem
+    review 2026-09-17, fix o tang uvicorn startup qua EDGE_FORWARDED_ALLOW_IPS
+    - KHONG sua logic _is_same_origin). Mo phong tinh trang TRUOC/CHUA trust
+    proxy dung: request.url.scheme van la http (fixture `client` mac dinh
+    http://testserver) trong khi Origin tu trinh duyet qua tunnel TLS-terminating
+    la https -> phai bi reject (403), dung hanh vi bug da gap thuc te."""
+    resp = client.post("/setup", data=_valid_form(),
+                        headers={"origin": "https://testserver"})
+    assert resp.status_code == 403
+    assert "did not originate from the /setup" in resp.text
+
+
+def test_is_same_origin_accepts_when_scheme_matches(tmp_path, monkeypatch):
+    """Cung Origin https nhung request.url.scheme CUNG la https (mo phong SAU
+    KHI ProxyHeadersMiddleware rewrite dung scheme, nho EDGE_FORWARDED_ALLOW_IPS
+    da duoc cau hinh trust dung peer IP cua proxy/tunnel) -> phai duoc chap
+    nhan, khong con 403 CSRF false-reject. Dung TestClient rieng voi base_url
+    https:// de request.url.scheme la https (fixture `client` mac dinh
+    http://testserver, khong the ep scheme qua header)."""
+    monkeypatch.setattr(settings_api, "_ENV_PATH", tmp_path / ".env")
+    app = FastAPI()
+    app.include_router(settings_api.router)
+    https_client = TestClient(app, base_url="https://testserver")
+
+    resp = https_client.post("/setup", data=_valid_form(),
+                              headers={"origin": "https://testserver"})
+
+    assert resp.status_code == 200
+    assert "Saved" in resp.text
+
+
+def test_setup_get_lists_forwarded_allow_ips_field(client):
+    resp = client.get("/setup")
+    assert resp.status_code == 200
+    assert 'id="EDGE_FORWARDED_ALLOW_IPS"' in resp.text
+    assert "Trusted reverse-proxy IPs" in resp.text
+    # EDGE_FORWARDED_ALLOW_IPS nam trong RESTART_REQUIRED_KEYS -> so badge
+    # "restart" phai dung bang so field trong tap do (khong thieu, khong thua).
+    assert resp.text.count(" restart</span>") == len(config.RESTART_REQUIRED_KEYS)
+
+
+def test_setup_activity_returns_empty_rows_when_store_missing():
+    """FastAPI() tran (khong qua lifespan that, giong pattern test agent=None
+    o setup_post) khong co app.state.store -> phai tra rong an toan, KHONG
+    crash 500 - xem review 2026-09-17 (panel 'Live activity')."""
+    app = FastAPI()
+    app.include_router(settings_api.router)
+    test_client = TestClient(app)
+
+    resp = test_client.get("/setup/activity")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"rows": []}
+
+
+def test_setup_activity_returns_recent_rows_from_store(tmp_path):
+    from edge_collector.store import Store
+
+    store = Store(tmp_path / "activity.db")
+    store.history_insert_many([
+        ("EDGE-NODE-1", "temp", 1000.0, 21.5, None, 0, 1),
+        ("EDGE-NODE-1", "hum", 1001.0, 55.0, None, 0, 1),
+    ])
+    app = FastAPI()
+    app.include_router(settings_api.router)
+    app.state.store = store
+    test_client = TestClient(app)
+
+    resp = test_client.get("/setup/activity")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["rows"]) == 2
+    assert {row["serial"] for row in body["rows"]} == {"EDGE-NODE-1"}
+    assert all(row["age_s"] >= 0 for row in body["rows"])
+    # ts lon hon (1001.0, kenh hum) phai dung TRUOC (DESC theo ts).
+    assert body["rows"][0]["ch"] == "hum"
+
+
+def test_setup_get_activity_script_escapes_via_textcontent(client):
+    """_ACTIVITY_SCRIPT phai duoc nhung nguyen ven vao HTML /setup - day la co
+    che escape client-side DUY NHAT cho du lieu serial/ch/s den tu thiet bi
+    NGOAI (node_agent) truoc khi noi vao innerHTML, tranh XSS luu tru qua
+    history. Test string-contains don gian la du, khong can headless browser
+    - xem review 2026-09-17 (panel 'Live activity')."""
+    resp = client.get("/setup")
+    assert resp.status_code == 200
+    assert "document.createElement('div')" in resp.text
+    assert "d.textContent=String(s)" in resp.text
+
+
+def test_setup_post_returns_clear_error_when_env_write_fails(client, monkeypatch):
+    """Regression cho finding docker-reviewer 2026-09-17: container chay
+    non-root (uid 1000) co the khong ghi duoc .env bind-mount tu host (vd
+    file thuoc so huu root/user khac tren host) - TRUOC KHI fix, OSError tu
+    _write_env_file() khong duoc bat -> 500 mac dinh cua FastAPI (traceback
+    tho, khong ro nguyen nhan la loi permission chu khong phai bug logic).
+    Mo phong bang monkeypatch _write_env_file de raise PermissionError (dang
+    con cua OSError) thay vi chmod file that - on dinh hon vi test co the
+    chay boi root (bo qua permission bit)."""
+    def _raise_permission_error(path, values):
+        raise PermissionError("[Errno 13] Permission denied: '%s'" % path)
+
+    monkeypatch.setattr(settings_api, "_write_env_file", _raise_permission_error)
+
+    resp = client.post("/setup", data=_valid_form(),
+                        headers={"origin": "http://testserver"})
+
+    assert resp.status_code == 500
+    assert "Could not write .env" in resp.text
+    assert "Traceback" not in resp.text
+
+
+def test_validate_rejects_invalid_forwarded_allow_ips(client, tmp_path):
+    """Regression cho finding python-reviewer 2026-09-17: truoc day gia tri
+    sai chinh ta cua EDGE_FORWARDED_ALLOW_IPS IM LANG khong co tac dung gi
+    (uvicorn's _TrustedHosts fail-closed, khong bao gio crash, chi khong bao
+    gio khop client that - khong ai biet TAI SAO trust proxy khong hoat dong).
+    Gio phai bi tu choi NGAY luc Save (400), KHONG duoc ghi xuong .env."""
+    form = _valid_form()
+    form["EDGE_FORWARDED_ALLOW_IPS"] = "not-an-ip, 10.0.0.0/8"
+
+    resp = client.post("/setup", data=form)
+
+    assert resp.status_code == 400
+    assert "EDGE_FORWARDED_ALLOW_IPS" in resp.text
+    assert "Invalid IP/CIDR" in resp.text
+    env_path = tmp_path / ".env"
+    assert not env_path.exists() or "not-an-ip" not in env_path.read_text()
+
+
+def test_validate_accepts_wildcard_and_valid_cidr(client):
+    """"*" (wildcard - trust MOI proxy, canh bao rieng trong docstring field,
+    khong phai loi validate) va danh sach IP/CIDR hop le (co the tron IP don
+    le lan CIDR) deu phai duoc chap nhan."""
+    form = _valid_form()
+    form["EDGE_FORWARDED_ALLOW_IPS"] = "*"
+    resp = client.post("/setup", data=form)
+    assert resp.status_code == 200
+    assert "Saved" in resp.text
+
+    form2 = _valid_form()
+    form2["EDGE_FORWARDED_ALLOW_IPS"] = "10.0.0.0/8,192.168.1.1"
+    resp2 = client.post("/setup", data=form2)
+    assert resp2.status_code == 200
+    assert "Saved" in resp2.text

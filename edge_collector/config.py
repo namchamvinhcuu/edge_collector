@@ -37,6 +37,14 @@ class Settings:
 
     listen_host: str = os.environ.get("EDGE_LISTEN_HOST", "0.0.0.0")
     listen_port: int = _int("EDGE_LISTEN_PORT", 8000)
+    # IP/CIDR cua reverse-proxy/tunnel duoc TIN de doc X-Forwarded-Proto/-Host -
+    # truyen thang cho uvicorn.run(forwarded_allow_ips=...) (xem __main__.py).
+    # Mac dinh giu NGUYEN default cua uvicorn ("127.0.0.1,::1" - chi trust
+    # loopback) de khong doi hanh vi cac deployment LAN-only dang chay; chi
+    # can doi khi dat edge_collector sau 1 reverse-proxy/tunnel TLS-terminating
+    # (vd truy cap /setup qua domain public) - xem review 2026-09-17
+    # (CSRF false-positive qua tunnel, _is_same_origin() settings_api.py).
+    forwarded_allow_ips: str = os.environ.get("EDGE_FORWARDED_ALLOW_IPS", "127.0.0.1,::1")
 
     state_dir: Path = field(default_factory=lambda: Path(os.environ.get("EDGE_STATE_DIR", "./var")))
 
@@ -71,9 +79,11 @@ class Settings:
         main_url/edge_code/edge_name/edge_platform/edge_base_url (odoo_client.py
         _headers()/hello() doc lai moi call) + 6 interval (scheduler.py doc
         lai moi vong asyncio.sleep). KHONG dung cho listen_host/listen_port
-        (uvicorn da bind socket luc khoi dong, doi vao day khong ai doc lai)
-        va state_dir (Store da mo SQLite co dinh luc EdgeAgent.__init__) -
-        3 field nay VAN CAN restart, xem review 2026-09-17 (tinh nang
+        (uvicorn da bind socket luc khoi dong, doi vao day khong ai doc lai),
+        state_dir (Store da mo SQLite co dinh luc EdgeAgent.__init__), va
+        forwarded_allow_ips (uvicorn.run() da doc gia tri nay 1 lan luc
+        khoi dong de dung ProxyHeadersMiddleware - xem __main__.py) -
+        4 field nay VAN CAN restart, xem review 2026-09-17 (tinh nang
         hot-reload cho trang /setup).
 
         AN TOAN voi 7 background task cua EdgeAgent (scheduler.py) dang doc
@@ -103,7 +113,8 @@ settings = Settings()
 # Field .env KHONG the hot-reload (can restart edge_collector) - dung o ca
 # settings_api.py (hien badge/thong bao) lan test, tranh 2 noi liet ke lech
 # nhau.
-RESTART_REQUIRED_KEYS = {"EDGE_LISTEN_HOST", "EDGE_LISTEN_PORT", "EDGE_STATE_DIR"}
+RESTART_REQUIRED_KEYS = {"EDGE_LISTEN_HOST", "EDGE_LISTEN_PORT", "EDGE_STATE_DIR",
+                          "EDGE_FORWARDED_ALLOW_IPS"}
 
 
 def reload_settings(path: Path = DOTENV_PATH) -> None:

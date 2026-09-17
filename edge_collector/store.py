@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS history (
     stable INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS ix_history_lookup ON history(serial, ch, ts);
+CREATE INDEX IF NOT EXISTS ix_history_ts ON history(ts);
 """
 
 
@@ -174,6 +175,22 @@ class Store:
             "avg": row[2], "min": row[3], "max": row[4],
             "last_stale_at": last_bad[0] if last_bad else None,
         }
+
+    def history_recent(self, limit: int = 50) -> list:
+        """Cac muc do gan day nhat (moi serial/channel), moi ngan xep, dung
+        cho panel 'live activity' o /setup - KHONG loc theo serial/ch nhu
+        history_latest/history_stats (do phuc vu view tong hop nhieu node)."""
+        with self._lock:
+            rows = self._cx.execute(
+                "SELECT serial, ch, ts, v, s, q, stable FROM history "
+                "ORDER BY ts DESC, id DESC LIMIT ?",
+                (max(1, limit),),
+            ).fetchall()
+        return [
+            {"serial": r[0], "ch": r[1], "ts": r[2], "v": r[3], "s": r[4],
+             "q": r[5], "stable": bool(r[6])}
+            for r in rows
+        ]
 
     def history_gc(self, older_than_ts: float) -> int:
         with self._lock:

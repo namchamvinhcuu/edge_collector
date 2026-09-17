@@ -92,6 +92,8 @@ async def node_measurements(request: Request, x_device_serial: Optional[str] = H
             it.get("stable"),
         )
         n += 1
+    if n:
+        _logger.info("node %s: accepted %d/%d readings", serial, n, len(items))
     return {"ok": True, "accepted": n}
 
 
