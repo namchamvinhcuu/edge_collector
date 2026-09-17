@@ -12,6 +12,7 @@ fms_iot_edge). O day kiem tra header do khop settings.edge_code khi co mat -
 khong chan cung neu thieu (de tuong thich thiet ke goc) nhung se ghi log canh
 bao. HAY tu chan tuong lua/route rieng cho cong nay, dung de tran ra Internet.
 """
+import collections
 import logging
 import time
 from typing import Optional
@@ -22,6 +23,24 @@ from .config import settings
 
 _logger = logging.getLogger("edge.inbound_api")
 router = APIRouter()
+
+# Ring-buffer TRONG BO NHO (KHONG persist SQLite) cho panel 'PCM requests' o
+# /setup - hien thi live request tu Odoo Main goi xuong edge nay. Mat khi
+# restart la chap nhan duoc (day la telemetry hien thi, khac history/outbox
+# can durable) - xem settings_api.py::setup_pcm_requests(). An toan voi
+# 1-worker constraint (module-level singleton, khong co await xen giua
+# deque.appendleft nen khong can lock, giong _pending trong scheduler.py).
+_RECENT_MAXLEN = 50
+_recent_requests = collections.deque(maxlen=_RECENT_MAXLEN)
+
+
+def _log_request(endpoint: str, **fields) -> None:
+    _recent_requests.appendleft({"ts": time.time(), "endpoint": endpoint, **fields})
+
+
+def recent_requests() -> list:
+    """Doc cho panel 'PCM requests' o /setup - xem settings_api.py."""
+    return list(_recent_requests)
 
 
 def _check_edge_code(x_edge_code: Optional[str]):
@@ -35,6 +54,7 @@ async def api_command(request: Request, x_edge_code: Optional[str] = Header(defa
     body = await request.json()
     serial, ch, cmd = body.get("serial"), body.get("channel"), body.get("cmd") or "read"
     value = body.get("value")
+    _log_request("/api/command", serial=serial, ch=ch, cmd=cmd)
     manager = request.app.state.manager
     driver = manager.driver_for_channel(serial, ch)
     if driver:
@@ -50,6 +70,7 @@ async def api_command(request: Request, x_edge_code: Optional[str] = Header(defa
 async def api_latest(request: Request, serial: str = "", ch: str = "",
                       x_edge_code: Optional[str] = Header(default=None)):
     _check_edge_code(x_edge_code)
+    _log_request("/api/latest", serial=serial, ch=ch)
     store = request.app.state.store
     row = store.history_latest(serial, ch)
     if not row:
@@ -67,6 +88,7 @@ async def api_browse(request: Request, x_edge_code: Optional[str] = Header(defau
     _check_edge_code(x_edge_code)
     body = await request.json()
     source_code, node_id, path = body.get("source"), body.get("node_id"), body.get("path")
+    _log_request("/api/browse", source=source_code)
     manager = request.app.state.manager
     driver = manager.get_driver(source_code)
     if not driver:
@@ -79,6 +101,7 @@ async def api_source_test(request: Request, x_edge_code: Optional[str] = Header(
     _check_edge_code(x_edge_code)
     body = await request.json()
     src_cfg = body.get("source") or {}
+    _log_request("/api/source/test", kind=src_cfg.get("kind"))
     manager = request.app.state.manager
     try:
         drv = manager.build_probe(src_cfg)
@@ -91,6 +114,7 @@ async def api_source_test(request: Request, x_edge_code: Optional[str] = Header(
 async def api_stats(request: Request, serial: str = "", ch: str = "", hours: float = 24,
                      x_edge_code: Optional[str] = Header(default=None)):
     _check_edge_code(x_edge_code)
+    _log_request("/api/stats", serial=serial, ch=ch, hours=hours)
     store = request.app.state.store
     since_ts = time.time() - max(0.1, hours) * 3600
     stats = store.history_stats(serial, ch, since_ts)

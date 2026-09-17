@@ -51,6 +51,7 @@ from dotenv.main import dotenv_values
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
 
+from . import inbound_api
 from .config import DOTENV_PATH, RESTART_REQUIRED_KEYS, reload_settings, settings
 
 router = APIRouter()
@@ -166,8 +167,12 @@ body {
   background: var(--bg); color: var(--fg);
   margin: 0; padding: 40px 20px 80px; line-height: 1.5;
 }
-.layout { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 760px 1fr; gap: 24px; align-items: start; }
-@media (max-width: 1080px) { .layout { grid-template-columns: 1fr; max-width: 760px; } }
+.layout {
+  max-width: 1360px; margin: 0 auto; display: grid;
+  grid-template-columns: 760px minmax(220px, 1fr) minmax(220px, 1fr);
+  gap: 24px; align-items: start;
+}
+@media (max-width: 1320px) { .layout { grid-template-columns: 1fr; max-width: 760px; } }
 .wrap { max-width: none; margin: 0; }
 h1 { font-size: 1.5rem; font-weight: 700; margin: 0 0 4px; }
 .lede { color: var(--muted-fg); font-size: 0.9rem; margin: 0 0 12px; }
@@ -280,6 +285,38 @@ _ACTIVITY_SCRIPT = """<script>
   }
   function poll(){
     fetch('/setup/activity').then(function(r){ return r.json(); })
+      .then(function(data){ render(data.rows || []); }).catch(function(){});
+  }
+  poll();
+  setInterval(poll, 3000);
+})();
+</script>"""
+
+# Panel "PCM requests" - CHIEU NGUOC LAI voi Live activity (Odoo Main goi
+# XUONG edge nay, xem inbound_api.py.recent_requests()/_log_request()).
+# summary da duoc build san o server (_summarize_pcm_request) - JS chi hien
+# thi, khong tu suy doan tung field khac nhau giua cac endpoint.
+_PCM_REQUESTS_SCRIPT = """<script>
+(function(){
+  var list = document.getElementById('pcm-requests-list');
+  if (!list) return;
+  function esc(s){ var d=document.createElement('div'); d.textContent=String(s); return d.innerHTML; }
+  function fmtAge(s){
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.floor(s/60) + 'm ago';
+    return Math.floor(s/3600) + 'h ago';
+  }
+  function render(rows){
+    if (!rows.length) { list.innerHTML = '<li class="activity-empty">Waiting for data...</li>'; return; }
+    list.innerHTML = rows.map(function(r){
+      return '<li class="activity-row">'
+        + '<div class="a-top"><span>' + esc(r.endpoint) + '</span>'
+        + '<span class="a-age">' + esc(fmtAge(r.age_s)) + '</span></div>'
+        + '<div class="a-val">' + esc(r.summary) + '</div></li>';
+    }).join('');
+  }
+  function poll(){
+    fetch('/setup/pcm_requests').then(function(r){ return r.json(); })
       .then(function(data){ render(data.rows || []); }).catch(function(){});
   }
   poll();
@@ -548,12 +585,18 @@ def _render(values: dict, errors: "Dict[str, List[str]]" = None, saved: bool = F
 <p class="group-desc">Recent readings pushed by node_agent devices, updates every few seconds.</p>
 <ul class="activity-list" id="activity-list"><li class="activity-empty">Waiting for data...</li></ul>
 </aside>
+<aside class="activity" aria-label="PCM requests">
+<h2>PCM requests</h2>
+<p class="group-desc">Recent calls from Odoo Main into this edge (commands, live reads, browse, tests).</p>
+<ul class="activity-list" id="pcm-requests-list"><li class="activity-empty">Waiting for data...</li></ul>
+</aside>
 </div>
 %s
 %s
 %s
+%s
 </body></html>""" % (_CSS, _ICON_RESTART, banner, "".join(sections), focus_script,
-                     _ACTIVITY_SCRIPT, _API_KEY_SCRIPT)
+                     _ACTIVITY_SCRIPT, _API_KEY_SCRIPT, _PCM_REQUESTS_SCRIPT)
 
 
 def _is_same_origin(request: Request) -> bool:
@@ -702,6 +745,56 @@ async def setup_activity(request: Request):
                 "q": r["q"], "stable": r["stable"],
                 "age_s": max(0, int(now - r["ts"])),
             }
+            for r in rows
+        ]
+    }
+
+
+_COMMAND_LABELS = {
+    "zero": "Zero", "tare": "Tare", "read": "Read value", "write": "Write value",
+    "restart": "Restart node", "reset_cycle": "Reset cycle",
+}
+
+
+def _summarize_pcm_request(r: dict) -> str:
+    """Tom tat 1 dong ngan gon, de doc cho panel 'PCM requests' - dat ten
+    theo dung label UI Odoo (pcm_base) de Nam thay quen mat, khong phai raw
+    endpoint path. Nguon: hoi session Odoo 2026-09-17 - moi request deu do
+    THAO TAC NGUOI DUNG kich hoat (nut Zero/Tare/Restart, tablet worker,
+    connection test, tag browser, workflow process...), KHONG co cron nao
+    tu poll cac endpoint nay."""
+    ep = r.get("endpoint")
+    if ep == "/api/command":
+        label = _COMMAND_LABELS.get(r.get("cmd"), r.get("cmd") or "?")
+        return "%s on %s / %s" % (label, r.get("serial"), r.get("ch"))
+    if ep == "/api/latest":
+        return "Read live value %s / %s" % (r.get("serial"), r.get("ch"))
+    if ep == "/api/browse":
+        return "Browse tags on '%s'" % r.get("source")
+    if ep == "/api/source/test":
+        return "Connection test (%s)" % (r.get("kind") or "unknown kind")
+    if ep == "/api/stats":
+        return "Channel statistics %s / %s (last %sh)" % (
+            r.get("serial"), r.get("ch"), r.get("hours"))
+    return ep or "unknown"
+
+
+@router.get("/setup/pcm_requests")
+async def setup_pcm_requests(request: Request):
+    """Nguon du lieu cho panel 'PCM requests' - CHIEU NGUOC LAI voi
+    /setup/activity: day la Odoo Main goi XUONG edge nay (inbound_api.py),
+    khong phai node_agent day len. Doc ring-buffer trong-bo-nho
+    (inbound_api.recent_requests()), khong persist SQLite - mat khi restart
+    la chap nhan duoc (telemetry hien thi, khac history/outbox can durable)."""
+    denied = _check_setup_auth(request)
+    if denied:
+        return denied
+    now = time.time()
+    rows = inbound_api.recent_requests()
+    return {
+        "rows": [
+            {"endpoint": r.get("endpoint"), "summary": _summarize_pcm_request(r),
+             "age_s": max(0, int(now - r["ts"]))}
             for r in rows
         ]
     }

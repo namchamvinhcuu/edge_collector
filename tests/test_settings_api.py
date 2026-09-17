@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import edge_collector.config as config
+import edge_collector.inbound_api as inbound_api
 import edge_collector.settings_api as settings_api
 
 
@@ -614,3 +615,63 @@ def test_setup_requires_basic_auth_rejects_non_ascii_password_without_crash(clie
     resp = client.get("/setup", headers={"Authorization": "Basic %s" % credentials})
 
     assert resp.status_code == 401
+
+
+def test_summarize_pcm_request_for_each_endpoint():
+    """Panel 'PCM requests' - doi xung NGUOC CHIEU voi 'Live activity'
+    (Odoo Main -> edge, khong phai node_agent -> edge). Verify ca 5 endpoint
+    + 2 gia tri cmd khac nhau cho /api/command (co trong _COMMAND_LABELS va
+    khong co, de bat regression fallback ve raw cmd)."""
+    assert settings_api._summarize_pcm_request(
+        {"endpoint": "/api/command", "serial": "EDGE1", "ch": "CH01", "cmd": "zero"}
+    ) == "Zero on EDGE1 / CH01"
+    assert settings_api._summarize_pcm_request(
+        {"endpoint": "/api/command", "serial": "EDGE1", "ch": "CH02", "cmd": "write"}
+    ) == "Write value on EDGE1 / CH02"
+    assert settings_api._summarize_pcm_request(
+        {"endpoint": "/api/latest", "serial": "EDGE1", "ch": "CH02"}
+    ) == "Read live value EDGE1 / CH02"
+    assert settings_api._summarize_pcm_request(
+        {"endpoint": "/api/browse", "source": "opcua-main"}
+    ) == "Browse tags on 'opcua-main'"
+    assert settings_api._summarize_pcm_request(
+        {"endpoint": "/api/source/test", "kind": "modbus"}
+    ) == "Connection test (modbus)"
+    assert settings_api._summarize_pcm_request(
+        {"endpoint": "/api/stats", "serial": "EDGE1", "ch": "CH03", "hours": 24}
+    ) == "Channel statistics EDGE1 / CH03 (last 24h)"
+
+
+def test_setup_pcm_requests_endpoint_returns_rows(client):
+    """Module-level deque cua inbound_api.py dung chung ca tien trinh pytest -
+    don truoc/sau de khong ro ri sang test khac (cung tinh than
+    tests/test_inbound_api.py)."""
+    inbound_api._recent_requests.clear()
+    try:
+        inbound_api._log_request("/api/command", serial="EDGE1", ch="CH01", cmd="zero")
+        inbound_api._log_request("/api/source/test", kind="modbus")
+
+        resp = client.get("/setup/pcm_requests")
+
+        assert resp.status_code == 200
+        rows = resp.json()["rows"]
+        assert len(rows) == 2
+        # appendleft - request MOI NHAT (log sau cung, /api/source/test) dung dau.
+        assert rows[0]["endpoint"] == "/api/source/test"
+        assert rows[0]["summary"] == "Connection test (modbus)"
+        assert rows[1]["summary"] == "Zero on EDGE1 / CH01"
+        assert all(row["age_s"] >= 0 for row in rows)
+    finally:
+        inbound_api._recent_requests.clear()
+
+
+def test_setup_pcm_requests_requires_auth_when_token_set(client):
+    """Route thu 5 cung phai duoc gate boi EDGE_SETUP_TOKEN giong 4 route
+    /setup/* con lai - tranh sot consistency khi them route moi."""
+    config.settings.setup_token = "sekret"  # secret-allow: test fixture
+
+    resp_no_auth = client.get("/setup/pcm_requests")
+    assert resp_no_auth.status_code == 401
+
+    resp_ok = client.get("/setup/pcm_requests", auth=("anyuser", "sekret"))
+    assert resp_ok.status_code == 200
