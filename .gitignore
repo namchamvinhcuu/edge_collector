@@ -25,3 +25,4 @@ venv_linux/
 # CLAUDE.md = symlink per-machine -> sync qua claude-agents (khong commit)
 /CLAUDE.md
 CLAUDE.md
+.vault-portal.conf
