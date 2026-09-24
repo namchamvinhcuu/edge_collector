@@ -412,6 +412,48 @@ def test_validate_rejects_invalid_forwarded_allow_ips(client, tmp_path):
     assert not env_path.exists() or "not-an-ip" not in env_path.read_text()
 
 
+def test_validate_rejects_invalid_mqtt_consumer_url_scheme(client, tmp_path):
+    """Patch MQTT (merge tu production): EDGE_MQTT_CONSUMER_URL sai scheme
+    phai bi tu choi ngay luc Save - paho.mqtt.Client._split_url() (mqtt_consumer.py)
+    chi biet strip 'mqtt://'/'tcp://', mot URL http:// se bi hieu nham thanh
+    host 'http', im lang khong noi duoc broker nao ca."""
+    form = _valid_form()
+    form["EDGE_MQTT_CONSUMER_URL"] = "http://192.168.5.190:1883"
+
+    resp = client.post("/setup", data=form)
+
+    assert resp.status_code == 400
+    assert "EDGE_MQTT_CONSUMER_URL" in resp.text
+    assert "mqtt://" in resp.text
+    env_path = tmp_path / ".env"
+    assert not env_path.exists() or "http://192.168.5.190:1883" not in env_path.read_text()
+
+
+def test_validate_accepts_mqtt_tcp_and_blank_consumer_url(client):
+    for scheme_url in ("mqtt://192.168.5.190:1883", "tcp://broker.local:1883", ""):
+        form = _valid_form()
+        form["EDGE_MQTT_CONSUMER_URL"] = scheme_url
+
+        resp = client.post("/setup", data=form)
+
+        assert resp.status_code == 200, "gia tri %r phai duoc chap nhan" % scheme_url
+        assert "Saved" in resp.text
+
+
+def test_validate_rejects_mqtts_consumer_url(client):
+    """mqtt_consumer._split_url() chi biet strip "mqtt://"/"tcp://" va khong
+    goi tls_set() o dau ca - "mqtts://"/"ssl://" se bi parse SAI (host thanh
+    chuoi "mqtts" thay vi hostname that) ma khong bao loi gi, nen phai bi
+    chan tu luc validate - xem python-reviewer 2026-09-24."""
+    form = _valid_form()
+    form["EDGE_MQTT_CONSUMER_URL"] = "mqtts://broker.local:8883"
+
+    resp = client.post("/setup", data=form)
+
+    assert resp.status_code == 400
+    assert "mqtt:// or tcp://" in resp.text
+
+
 def test_validate_accepts_wildcard_and_valid_cidr(client):
     """"*" (wildcard - trust MOI proxy, canh bao rieng trong docstring field,
     khong phai loi validate) va danh sach IP/CIDR hop le (co the tron IP don

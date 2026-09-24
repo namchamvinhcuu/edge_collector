@@ -68,12 +68,19 @@ class OdooClient:
             body = r.json()
         except ValueError:
             body = {"raw": r.text[:500]}
+        if not isinstance(body, dict):
+            # JSON hop le nhung KHONG phai object (vd Odoo tra ve list/chuoi/so
+            # kem status loi) - body.setdefault(...) duoi day se raise
+            # AttributeError khong bi bat, lan ra tan _sender_loop qua
+            # asyncio.gather() lam chet ca task khong hoi phuc - xem
+            # python-reviewer 2026-09-24 (finding tu vong song song hoa
+            # _sender_loop, phat hien la pre-existing o day).
+            body = {"raw": body}
         if not r.is_success:
             body.setdefault("ok", False)
             body.setdefault("error", body.get("error") or ("http %s" % r.status_code))
             return body
-        if isinstance(body, dict):
-            body.setdefault("ok", True)
+        body.setdefault("ok", True)
         return body
 
     # ------------------------------------------------------------------

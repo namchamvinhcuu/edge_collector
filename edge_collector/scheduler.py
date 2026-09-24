@@ -14,6 +14,7 @@ import uuid
 
 from .config import settings
 from .manager import SourceManager
+from .mqtt_consumer import MqttConsumer
 from .odoo_client import OdooClient
 from .printer import send_job
 from .store import Store
@@ -28,6 +29,14 @@ class EdgeAgent:
         self.store = Store(settings.sqlite_path)
         self.odoo = OdooClient(self.store)
         self.manager = SourceManager(self._on_value)
+        # Ben DOC cua duong MQTT. Mac dinh chi DEM, khong day vao outbox —
+        # xem chu thich dau mqtt_consumer.py (che do bong).
+        self.mqtt_consumer = MqttConsumer(self)
+        # SourceManager can duong MQTT de day lenh xuong node. Noc vao day
+        # thay vi truyen qua __init__ de khong doi chu ky ham dung cua no
+        # — manager chi dung khi thuoc tinh nay co, va tu quay ve hang doi
+        # poll khi khong.
+        self.manager.mqtt_cmd = self.mqtt_consumer
         self._pending: dict = {}          # serial -> list[item dict], cho tung dot flush
         self._boot_id = self.store.kv_get("boot_id")
         if not self._boot_id:
@@ -63,6 +72,7 @@ class EdgeAgent:
 
     # ------------------------------------------------------------------
     async def start(self):
+        await self.mqtt_consumer.start()
         self._tasks = [
             asyncio.create_task(self._hello_loop()),
             asyncio.create_task(self._config_loop()),
@@ -78,6 +88,7 @@ class EdgeAgent:
         for t in self._tasks:
             t.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
+        await self.mqtt_consumer.stop()
         await self.manager.shutdown()
         await self.odoo.aclose()
 
@@ -130,24 +141,79 @@ class EdgeAgent:
                 seq = self.store.next_seq(serial)
                 self.store.outbox_push(serial, self._boot_id, seq, {"items": items})
 
+    # 21/09: mot vong CHI gui mot ban ghi roi ngu 0,2 s — toi da ~2,2 ban/giay.
+    # _flush_loop day ra 1/submit_interval_s = 4 ban/giay. San xuat > tieu thu
+    # nen ton kho lon dan va do tre tang theo thoi gian: "chay mot hoi la no
+    # tre so voi can nhay thuc te". Rut can ton kho trong mot vong, va chi ngu
+    # khi khong con gi de gui.
+    MAX_MOI_VONG = 30
+
+    # 24/09: rut can outbox tung serial TUAN TU (1 luc 1 serial) khong scale
+    # khi so serial len toi hang tram - 1 vong drain se can (so serial) lan
+    # round-trip HTTP noi tiep toi Odoo, co the vuot han submit_interval_s va
+    # lam do tre forward tang dan theo thoi gian (KHONG mat du lieu - outbox
+    # van giu - chi cham). Gioi han so serial gui DONG THOI bang semaphore,
+    # tha long chieu song song ma khong ban pha Odoo bang hang tram request
+    # cung luc. Thu tu ben TRONG 1 serial VAN tuan tu (giu dung invariant
+    # "dung lai cho serial nay khi loi" - chi serial KHAC nhau moi chay
+    # song song voi nhau).
+    MAX_CONCURRENT_SERIALS = 8
+
+    async def _drain_serial(self, serial: str) -> bool:
+        sent_any = False
+        for _ in range(self.MAX_MOI_VONG):
+            row = self.store.outbox_oldest(serial)
+            if not row:
+                break
+            meta = self.manager.device_meta(serial)
+            device_meta = {"name": meta.get("name")} if meta else None
+            res = await self.odoo.measurements(
+                serial, row["payload"]["items"], row["bid"], row["seq"],
+                device_meta)
+            if not res.get("ok"):
+                _logger.info("gui measurements that bai cho %s: %s",
+                             serial, res.get("error"))
+                break    # giu thu tu — dung lai cho serial nay
+            self.store.outbox_delete(row["id"])
+            sent_any = True
+        return sent_any
+
     async def _sender_loop(self):
+        sem = asyncio.Semaphore(self.MAX_CONCURRENT_SERIALS)
+
+        async def _drain_with_limit(serial: str) -> bool:
+            async with sem:
+                return await self._drain_serial(serial)
+
         while not self._stopping.is_set():
             sent_any = False
-            for serial in self.store.outbox_serials():
-                row = self.store.outbox_oldest(serial)
-                if not row:
-                    continue
-                meta = self.manager.device_meta(serial)
-                device_meta = {"name": meta.get("name")} if meta else None
-                res = await self.odoo.measurements(
-                    serial, row["payload"]["items"], row["bid"], row["seq"], device_meta)
-                if res.get("ok"):
-                    self.store.outbox_delete(row["id"])
-                    sent_any = True
-                else:
-                    _logger.info("gui measurements that bai cho %s: %s", serial, res.get("error"))
-                    break        # giu thu tu — dung lai cho serial nay, thu serial khac
-            await asyncio.sleep(0.2 if sent_any else 1.0)
+            try:
+                serials = self.store.outbox_serials()
+                if serials:
+                    # return_exceptions=True: 1 serial raise (vd loi mang la, bug
+                    # driver...) KHONG duoc phep giet ca gather() - mac dinh cua
+                    # asyncio.gather() se lam CA task _sender_loop chet vinh vien
+                    # (khong watchdog tu respawn), y het loai bug OdooClient._parse
+                    # da fix 2026-09-24 nhung ap dung cho MOI nguon loi tuong lai,
+                    # khong chi rieng loi do.
+                    results = await asyncio.gather(
+                        *(_drain_with_limit(s) for s in serials), return_exceptions=True)
+                    for serial, res in zip(serials, results):
+                        if isinstance(res, BaseException):
+                            _logger.exception("loi khong luong truoc khi gui outbox cho %s",
+                                              serial, exc_info=res)
+                            continue
+                        if res:
+                            sent_any = True
+            except Exception:                                          # noqa: BLE001
+                # Cung pattern try/except+log nhu 5 vong lap con lai cua EdgeAgent
+                # (_hello_loop/_config_loop/_heartbeat_loop/_print_loop/_gc_loop) -
+                # truoc day _sender_loop la vong DUY NHAT thieu, nen 1 loi ngoai du
+                # kien (vd outbox_serials() tu no loi) se giet ca vong lap ma
+                # khong ai biet - xem review 2026-09-24 (cau hoi scale hang tram
+                # sensor cua Nam).
+                _logger.exception("loi trong sender_loop")
+            await asyncio.sleep(0.02 if sent_any else 1.0)
 
     async def _heartbeat_loop(self):
         while not self._stopping.is_set():

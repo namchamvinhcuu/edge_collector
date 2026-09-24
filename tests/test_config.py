@@ -3,6 +3,10 @@
 os.environ va cap nhat singleton `settings` TAI CHO (khong tao object moi,
 vi odoo_client.py/scheduler.py da giu tham chieu toi CHINH object nay luc
 import). Xem review 2026-09-17 (tinh nang hot-reload)."""
+import os
+
+import pytest
+
 import edge_collector.config as config
 
 
@@ -65,3 +69,78 @@ def test_settings_reload_keeps_edge_code_when_env_var_blank(monkeypatch):
     config.settings.reload()
 
     assert config.settings.edge_code == "EDGE-KEEP-ME"
+
+
+# --- patch MQTT (merge tu production 192.168.5.190) ------------------------
+
+
+def test_settings_post_init_auto_generates_mqtt_client_id_from_edge_code(tmp_path):
+    """__post_init__ phai tu sinh 'edge-consumer-<edge_code>' khi
+    EDGE_MQTT_CONSUMER_CLIENT_ID de trong - client_id PHAI CO DINH va KHAC
+    NHAU giua cac edge (xem chu thich dau mqtt_consumer.py, muc 'Ben bi khi
+    consumer chet'): hai tien trinh dung chung client_id se da nhau ra khoi
+    broker lien tuc. Truyen state_dir=tmp_path de tranh __post_init__ tao
+    thu muc './var' that cua repo nhu mot side-effect ngoai y muon."""
+    s = config.Settings(mqtt_consumer_client_id="", edge_code="EDGE-TEST123",
+                        state_dir=tmp_path)
+
+    assert s.mqtt_consumer_client_id == "edge-consumer-EDGE-TEST123"
+
+
+def test_settings_post_init_keeps_explicit_mqtt_client_id(tmp_path):
+    """Da co gia tri tuong minh (vd nguoi dung tu dat trong .env) -> KHONG
+    duoc ghi de bang gia tri tu sinh."""
+    s = config.Settings(mqtt_consumer_client_id="custom-fixed-id",
+                        edge_code="EDGE-X", state_dir=tmp_path)
+
+    assert s.mqtt_consumer_client_id == "custom-fixed-id"
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("true", True), ("True", True), ("TRUE", True),
+    ("1", True), ("yes", True), ("YES", True), ("on", True), ("On", True),
+    ("false", False), ("False", False), ("0", False),
+    ("no", False), ("off", False), ("garbage", False),
+])
+def test_bool_parses_truthy_and_falsy_variants(monkeypatch, raw, expected):
+    monkeypatch.setenv("EDGE_TEST_BOOL_FIELD", raw)
+
+    assert config._bool("EDGE_TEST_BOOL_FIELD", not expected) is expected
+
+
+def test_bool_returns_default_when_env_var_missing(monkeypatch):
+    monkeypatch.delenv("EDGE_TEST_BOOL_FIELD", raising=False)
+
+    assert config._bool("EDGE_TEST_BOOL_FIELD", True) is True
+    assert config._bool("EDGE_TEST_BOOL_FIELD", False) is False
+
+
+def test_bool_returns_default_when_env_var_blank(monkeypatch):
+    """Gia tri RONG (bien co ton tai, vd EDGE_MQTT_CONSUMER_FORWARD= trong
+    .env) khac voi bien KHONG TON TAI - ca hai phai cung roi ve default,
+    khong duoc bi coi la falsy '0'/'false' mot cach am tham."""
+    monkeypatch.setenv("EDGE_TEST_BOOL_FIELD", "")
+
+    assert config._bool("EDGE_TEST_BOOL_FIELD", True) is True
+    assert config._bool("EDGE_TEST_BOOL_FIELD", False) is False
+
+
+def test_settings_mqtt_consumer_restart_required_keys_registered():
+    """8 field EDGE_MQTT_CONSUMER* moi (tru _FORWARD, ma _FORWARD cung nam
+    trong RESTART_REQUIRED_KEYS - xem config.py) phai nam trong
+    RESTART_REQUIRED_KEYS: paho bind client/phien luc start(), doi cac gia
+    tri nay sau do khong ai doc lai (xem chu thich Settings)."""
+    for key in ("EDGE_MQTT_CONSUMER", "EDGE_MQTT_CONSUMER_URL",
+                "EDGE_MQTT_CONSUMER_USER", "EDGE_MQTT_CONSUMER_PASS",
+                "EDGE_MQTT_CONSUMER_TOPIC", "EDGE_MQTT_CONSUMER_STATUS_TOPIC",
+                "EDGE_MQTT_CONSUMER_CLIENT_ID", "EDGE_MQTT_CONSUMER_FORWARD"):
+        assert key in config.RESTART_REQUIRED_KEYS
+
+    # KHONG duoc "hot" - Settings.reload() khong duoc dung toi field nay.
+    original = config.settings.mqtt_consumer_forward
+    os.environ["EDGE_MQTT_CONSUMER_FORWARD"] = "true" if not original else "false"
+    try:
+        config.settings.reload()
+        assert config.settings.mqtt_consumer_forward == original
+    finally:
+        del os.environ["EDGE_MQTT_CONSUMER_FORWARD"]

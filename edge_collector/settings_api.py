@@ -69,6 +69,8 @@ _GROUPS = [
      "Local networking and where this edge keeps its state."),
     ("timing", "Sync intervals",
      "How often this edge talks to Odoo."),
+    ("mqtt", "MQTT broker",
+     "The factory broker this edge reads from and sends node commands through."),
 ]
 
 _FIELDS = [
@@ -115,6 +117,33 @@ _FIELDS = [
      "hint": "Batch measurements to Odoo", "group": "timing"},
     {"key": "EDGE_CONFIG_DEBOUNCE_S", "label": "Config debounce (s)", "default": "10",
      "hint": "Delay before applying a config change", "group": "timing"},
+    {"key": "EDGE_MQTT_CONSUMER", "label": "Enable MQTT consumer", "default": "false",
+     "hint": "true | false - read measurements from the broker instead of waiting "
+             "for nodes to POST them", "group": "mqtt"},
+    {"key": "EDGE_MQTT_CONSUMER_URL", "label": "Broker address", "default": "mqtt://127.0.0.1:1883",
+     "hint": "e.g. mqtt://192.168.5.190:1883 - use the LAN address, not 127.0.0.1: "
+             "this service runs in a container and its loopback is not the host's",
+     "group": "mqtt"},
+    {"key": "EDGE_MQTT_CONSUMER_USER", "label": "Broker username", "default": "",
+     "hint": "Matches the broker's own credentials (see broker/.env)", "group": "mqtt"},
+    {"key": "EDGE_MQTT_CONSUMER_PASS", "label": "Broker password", "default": "",
+     "hint": "Stored in this edge's .env. Rotating it also means reflashing every "
+             "node, because nodes carry it in firmware",
+     "group": "mqtt", "input_type": "password"},
+    {"key": "EDGE_MQTT_CONSUMER_FORWARD", "label": "Push readings into Odoo", "default": "false",
+     "hint": "true | false - MUST be true once nodes have HTTP switched off, "
+             "otherwise readings stop at this edge. Keep false while a node still "
+             "sends the same reading over both HTTP and MQTT, or Odoo records it twice",
+     "group": "mqtt"},
+    {"key": "EDGE_MQTT_CONSUMER_TOPIC", "label": "Measurement topic", "default": "fms/+/meas",
+     "hint": "Wildcard pattern; + stands for the node serial", "group": "mqtt"},
+    {"key": "EDGE_MQTT_CONSUMER_STATUS_TOPIC", "label": "Status topic", "default": "fms/+/status",
+     "hint": "Carries online / Last Will, and the node's own 'I accept MQTT commands' flag",
+     "group": "mqtt"},
+    {"key": "EDGE_MQTT_CONSUMER_CLIENT_ID", "label": "Client id", "default": "",
+     "hint": "Leave blank to derive it from the edge code. Must be fixed and unique: "
+             "the durable session is keyed on it, and two processes sharing one id "
+             "keep kicking each other off the broker", "group": "mqtt"},
 ]
 
 _LABELS = {f["key"]: f["label"] for f in _FIELDS}
@@ -439,6 +468,17 @@ def _validate(values: dict) -> Dict[str, List[str]]:
             add(key, "Must not contain a newline")
     if not values.get("EDGE_MAIN_URL", "").startswith(("http://", "https://")):
         add("EDGE_MAIN_URL", "Must start with http:// or https://")
+    url = values.get("EDGE_MQTT_CONSUMER_URL", "")
+    # CHI 2 scheme nay - mqtt_consumer._split_url() chi biet strip "mqtt://"/
+    # "tcp://" va khong goi tls_set() o dau ca, nen "mqtts://"/"ssl://" se bi
+    # parse SAI (host thanh chuoi "mqtts" thay vi hostname that) ma khong bao
+    # loi gi - xem python-reviewer 2026-09-24 (finding tu vong merge patch).
+    if url and not url.startswith(("mqtt://", "tcp://")):
+        add("EDGE_MQTT_CONSUMER_URL", "Must start with mqtt:// or tcp:// (TLS not supported yet)")
+    for key in ("EDGE_MQTT_CONSUMER", "EDGE_MQTT_CONSUMER_FORWARD"):
+        v = (values.get(key) or "").strip().lower()
+        if v and v not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
+            add(key, "Must be true or false")
     base_url = values.get("EDGE_BASE_URL", "")
     if base_url and not base_url.startswith(("http://", "https://")):
         add("EDGE_BASE_URL", "Must start with http:// or https:// (or be left blank)")

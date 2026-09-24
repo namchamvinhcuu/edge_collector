@@ -11,10 +11,15 @@ from fastapi import FastAPI
 from .config import settings
 from .inbound_api import router as inbound_router
 from .node_api import router as node_router
+from .ops_api import router as ops_router
 from .scheduler import EdgeAgent
 from .settings_api import router as settings_router
 
-_LOG_MAX_BYTES = 5 * 1024 * 1024
+# 20 MB x 5 ban luu = 100 MB. Do 19/09: edge_collector in ca payload cua
+# TUNG lan gui measurements (hai dong: goi va phan hoi), ra 21 MB/ngay — voi
+# vong 5 MB cu thi nhat ky chi giu duoc ~1,4 ngay, khong du de sang hom sau
+# doc lai mot su co dem qua. Dia con 172 GB, 100 MB la re.
+_LOG_MAX_BYTES = 20 * 1024 * 1024
 _LOG_BACKUP_COUNT = 5
 
 
@@ -46,6 +51,16 @@ def _configure_logging() -> None:
     root.addHandler(console_handler)
     root.addHandler(file_handler)
 
+    # httpx ghi mot dong INFO cho TUNG request HTTP, va nhip gui len Odoo la
+    # 1 giay — do duoc 19/09: httpx + edge.odoo_client chiem ~93% so dong,
+    # lam vong log 30 MB quay het trong chua toi 5 gio. Mot su co luc 2 gio
+    # sang thi 7 gio sang da khong con dau vet nao de doc.
+    #
+    # Ha xuong WARNING thi loi va timeout VAN ghi day du, chi bo phan "da
+    # goi thanh cong" lap lai 86400 lan mot ngay.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -75,15 +90,33 @@ def create_app() -> FastAPI:
     app.include_router(inbound_router)
     app.include_router(node_router)
     app.include_router(settings_router)
+    app.include_router(ops_router)
 
     @app.get("/healthz")
     async def healthz():
         agent: EdgeAgent = app.state.agent
+        mqtt_stats = agent.mqtt_consumer.stats
         return {
             "ok": True,
             "config_rev": agent.manager.config_rev,
             "outbox": agent.store.outbox_count(),
             "sources": agent.manager.status_rows(),
+            # CHI so tong hop - "/healthz" cong khai KHONG qua auth (xem
+            # docstring ops_api.py), nen bo "by_serial"/"online" (dinh danh
+            # + trang thai song/chet cua tung thiet bi vat ly) khoi day; chi
+            # tiet do da co o "/ops/api/state" (gate boi _check_setup_auth) -
+            # xem python-reviewer 2026-09-24 (finding tu vong merge patch).
+            "mqtt_consumer": {
+                "connected": mqtt_stats["connected"],
+                "messages": mqtt_stats["messages"],
+                "items": mqtt_stats["items"],
+                "forwarded": mqtt_stats["forwarded"],
+                "bad": mqtt_stats["bad"],
+                "last_ts": mqtt_stats["last_ts"],
+                "cmd_sent": mqtt_stats["cmd_sent"],
+                "cmd_acked": mqtt_stats["cmd_acked"],
+                "ts_dropped": mqtt_stats["ts_dropped"],
+            },
         }
 
     return app

@@ -27,6 +27,13 @@ def _int(name, default):
         return default
 
 
+def _bool(name, default=False):
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 @dataclass
 class Settings:
     main_url: str = os.environ.get("EDGE_MAIN_URL", "http://localhost:8069").rstrip("/")
@@ -54,6 +61,25 @@ class Settings:
 
     state_dir: Path = field(default_factory=lambda: Path(os.environ.get("EDGE_STATE_DIR", "./var")))
 
+    # --- ben DOC cua duong MQTT (mqtt_consumer.py) -----------------------
+    # KHONG hot-reload duoc: paho bind client/phien luc start(), doi cac gia
+    # tri nay sau do khong ai doc lai — nen chung nam trong
+    # RESTART_REQUIRED_KEYS ben duoi va KHONG co trong Settings.reload().
+    mqtt_consumer_enabled: bool = _bool("EDGE_MQTT_CONSUMER", False)
+    mqtt_consumer_url: str = os.environ.get("EDGE_MQTT_CONSUMER_URL", "mqtt://127.0.0.1:1883")
+    mqtt_consumer_user: str = os.environ.get("EDGE_MQTT_CONSUMER_USER", "")
+    mqtt_consumer_pass: str = os.environ.get("EDGE_MQTT_CONSUMER_PASS", "")
+    mqtt_consumer_topic: str = os.environ.get("EDGE_MQTT_CONSUMER_TOPIC", "fms/+/meas")
+    mqtt_consumer_status_topic: str = os.environ.get(
+        "EDGE_MQTT_CONSUMER_STATUS_TOPIC", "fms/+/status")
+    # Phien ben bi can client_id CO DINH va DUY NHAT — xem chu thich dau
+    # mqtt_consumer.py. Lay theo edge_code de hai edge canh nhau khong da
+    # nhau ra khoi broker.
+    mqtt_consumer_client_id: str = os.environ.get("EDGE_MQTT_CONSUMER_CLIENT_ID", "")
+    # Mac dinh TAT: o giai doan 2 node gui CUNG mot so do bang ca HTTP lan
+    # MQTT, bat cai nay khi ca hai dang chay se lam Odoo nhan doi moi mau.
+    mqtt_consumer_forward: bool = _bool("EDGE_MQTT_CONSUMER_FORWARD", False)
+
     hello_interval_s: int = _int("EDGE_HELLO_INTERVAL_S", 30)
     heartbeat_interval_s: int = _int("EDGE_HEARTBEAT_INTERVAL_S", 30)
     config_poll_interval_s: int = _int("EDGE_CONFIG_POLL_INTERVAL_S", 30)
@@ -64,6 +90,8 @@ class Settings:
     def __post_init__(self):
         self.state_dir = Path(self.state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
+        if not self.mqtt_consumer_client_id:
+            self.mqtt_consumer_client_id = "edge-consumer-%s" % self.edge_code
 
     @property
     def state_json_path(self) -> Path:
@@ -122,7 +150,11 @@ settings = Settings()
 # settings_api.py (hien badge/thong bao) lan test, tranh 2 noi liet ke lech
 # nhau.
 RESTART_REQUIRED_KEYS = {"EDGE_LISTEN_HOST", "EDGE_LISTEN_PORT", "EDGE_STATE_DIR",
-                          "EDGE_FORWARDED_ALLOW_IPS"}
+                          "EDGE_FORWARDED_ALLOW_IPS",
+                          "EDGE_MQTT_CONSUMER", "EDGE_MQTT_CONSUMER_URL",
+                          "EDGE_MQTT_CONSUMER_USER", "EDGE_MQTT_CONSUMER_PASS",
+                          "EDGE_MQTT_CONSUMER_TOPIC", "EDGE_MQTT_CONSUMER_STATUS_TOPIC",
+                          "EDGE_MQTT_CONSUMER_CLIENT_ID", "EDGE_MQTT_CONSUMER_FORWARD"}
 
 
 def reload_settings(path: Path = DOTENV_PATH) -> None:

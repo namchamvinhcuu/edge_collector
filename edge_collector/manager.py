@@ -168,19 +168,60 @@ class SourceManager:
     def has_node_or_driver(self, serial: str, ch_code: str) -> bool:
         return (serial, ch_code) in self._route or serial in self._node_last_seen
 
-    async def queue_command(self, serial: str, ch: str, cmd: str, value, timeout: float = 8.0) -> dict:
+    async def queue_command(self, serial: str, ch: str, cmd: str, value,
+                            timeout: float = 8.0, extra: Optional[dict] = None) -> dict:
         """Xep mot lenh cho NODE (khong co driver dieu khien duoc — vd http_node),
         cho node tu poll roi ack. Dung khi driver_for_channel() tra ve None."""
         self._node_cmd_seq += 1
         cmd_id = self._node_cmd_seq
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         self._node_futures[cmd_id] = fut
-        self._node_queues.setdefault(serial, asyncio.Queue()).put_nowait(
-            {"id": cmd_id, "channel": ch, "cmd": cmd, "value": value})
+        payload = {"id": cmd_id, "channel": ch, "cmd": cmd, "value": value}
+        if extra:
+            payload.update(extra)
+
+        # Duong MQTT truoc, hang doi poll lam du phong.
+        #
+        # Khac biet khong nho: hang doi poll bat node tu di hoi moi 2 giay,
+        # nen do tre trung binh cua mot lan bam den la ~1,1 giay CHI de biet
+        # rang co lenh. MQTT day thang xuong.
+        #
+        # Chon duong dua tren co "cmd" node tu bao trong <goc>/<serial>/status
+        # chu khong dua tren cau hinh ben nay: firmware cu khong biet nghe
+        # MQTT van phai duoc phuc vu bang hang doi, va no tu noi dieu do.
+        mq = getattr(self, "mqtt_cmd", None)
+        if mq is not None and mq.publish_command(serial, payload):
+            pass
+        elif mq is not None and mq.caps.get(serial):
+            # Firmware nay noi MQTT nhung gui khong duoc (node rot, hoac mat
+            # broker). KHONG duoc xep vao hang doi poll: firmware da tat HTTP
+            # nen khong con ai goi /node/v1/commands de lay ra — lenh se nam
+            # do mai mai, vua ro ri bo nho vua bao sai nguyen nhan cho nguoi
+            # bam nut. Bao that luon.
+            self._node_futures.pop(cmd_id, None)
+            return {"ok": False,
+                    "error": "node %s dang khong ket noi toi broker" % serial}
+        else:
+            # Firmware cu, van tu poll /node/v1/commands.
+            self._node_queues.setdefault(serial, asyncio.Queue()).put_nowait(payload)
         try:
             return await asyncio.wait_for(fut, timeout=timeout)
         except asyncio.TimeoutError:
-            return {"ok": False, "error": "node khong tra loi trong %.0fs" % timeout}
+            # KHONG the phan biet "lenh that su khong chay duoc" voi "da chay
+            # nhung ACK bi mat mang" - node_ack_command() khong bao gio duoc
+            # goi thi future o day chi biet no cho qua lau, khong biet ket
+            # qua that su la gi. "ok": False giu NGUYEN de tuong thich nguoc.
+            #
+            # "status": "unknown" dung LAI field "status" da co san (node_ack_
+            # command() dat "ok"/"error", da duoc pcm_base whitelist xuyen qua
+            # api_iot.py/pod_screen's api.py toi frontend Tags.tsx san - phoi
+            # hop 2026-09-24 voi session Odoo: gia tri thu 3 nay khong can sua
+            # gi them phia Odoo, Tags.tsx tu hien thi dung chuoi status/error
+            # thay vi "That bai" cung, tranh nguoi van hanh bam lai lenh da
+            # chay xong that.
+            return {"ok": False, "status": "unknown",
+                    "error": "node khong tra loi trong %.0fs - co the da thuc thi "
+                             "nhung mat ACK" % timeout}
         finally:
             self._node_futures.pop(cmd_id, None)
 

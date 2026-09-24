@@ -65,8 +65,8 @@ drops data.
 ## Quick start (venv)
 
 ```bash
-git clone https://github.com/namchamvinhcuu/pcm-edge-collector.git
-cd pcm-edge-collector
+git clone https://github.com/namchamvinhcuu/edge_collector.git
+cd edge_collector
 python -m venv .venv && . .venv/bin/activate   # .venv\Scripts\activate on Windows
 pip install -r requirements.txt
 cp .env.example .env      # then edit EDGE_MAIN_URL, EDGE_CODE, EDGE_BASE_URL...

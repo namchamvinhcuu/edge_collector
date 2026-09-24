@@ -54,14 +54,25 @@ async def api_command(request: Request, x_edge_code: Optional[str] = Header(defa
     body = await request.json()
     serial, ch, cmd = body.get("serial"), body.get("channel"), body.get("cmd") or "read"
     value = body.get("value")
+    # Tham so phu cho cac kieu phat cua den: {"ms": 10000} = sang 10 giay roi
+    # tu tat, {"cmd":"blink","period_ms":500,"ms":30000} = chop 30 giay.
+    #
+    # Chi chuyen tiep nhung khoa DA BIET, khong bung nguyen body xuong node:
+    # firmware phan tich goi nay bang mot bo dem 192 byte, nen mot body thua
+    # truong se bi cat mat va lenh im lang khong chay.
+    # type() thay isinstance(): bool la subclass cua int trong Python, {"ms": true}
+    # tu Odoo se lot qua isinstance(x, (int, float)) va merge xuong firmware duoi
+    # dang JSON "true" - firmware doi so nguyen cho "ms", hong lang le.
+    extra = {k: body[k] for k in ("ms", "period_ms") if type(body.get(k)) in (int, float)}
     _log_request("/api/command", serial=serial, ch=ch, cmd=cmd)
     manager = request.app.state.manager
     driver = manager.driver_for_channel(serial, ch)
     if driver:
         return await driver.command(ch, cmd, value)
     if serial in manager.known_node_serials():
-        # Node (http_node) khong bi goi nguoc duoc — xep hang cho no tu poll.
-        return await manager.queue_command(serial, ch, cmd, value)
+        # Node khong bi goi nguoc duoc: hoac day xuong qua MQTT, hoac xep
+        # hang cho firmware cu tu poll — manager tu chon, xem queue_command().
+        return await manager.queue_command(serial, ch, cmd, value, extra=extra)
     return {"ok": False,
             "error": "khong tim thay kenh %s cua %s dang chay tren edge nay" % (ch, serial)}
 
