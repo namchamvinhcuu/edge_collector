@@ -25,4 +25,13 @@ venv_linux/
 # CLAUDE.md = symlink per-machine -> sync qua claude-agents (khong commit)
 /CLAUDE.md
 CLAUDE.md
+AGENTS.md
 .vault-portal.conf
+
+# Vault + skill vault dung chung - symlink per-machine, source o repo rieng
+.obsidian-vault
+.python-skill
+.common-skill
+
+# graphify artifact - per-may, dung lai duoc bang `graphify update .`
+graphify-out/
