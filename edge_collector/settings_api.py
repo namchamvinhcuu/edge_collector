@@ -41,6 +41,7 @@ import base64
 import html
 import ipaddress
 import math
+import hashlib
 import secrets
 import time
 from pathlib import Path
@@ -404,6 +405,19 @@ def _current_values() -> dict:
     return {f["key"]: on_disk.get(f["key"]) or f["default"] for f in _FIELDS}
 
 
+def _env_fingerprint(path: Path) -> str:
+    """Optimistic-concurrency guard chong mat thay doi khi co 2 nguon ghi
+    .env chong nhau (vd sua truc tiep qua SSH trong luc 1 tab /setup khac
+    van dang mo) - _write_env_file() ghi lai TOAN BO gia tri lay tu form,
+    nen 1 tab cu con mo se am tham GHI DE thay doi tu ben ngoai ngay ca khi
+    Nam chi doi 1 field KHONG lien quan - da tai hien that (EDGE_FORWARDED_
+    ALLOW_IPS bi mat sau khi sua qua SSH roi Save 1 field khac tu tab cu) -
+    xem Fix-History 2026-09-25."""
+    if not path.exists():
+        return "missing"
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _format_env_line(key: str, value: str) -> str:
     """Quote logic khop CHINH XAC python-dotenv set_key(quote_mode='auto')
     (dotenv/main.py set_key()) - dung lai de KHONG lap lai bug '#'-truncation
@@ -561,8 +575,10 @@ def _render_field(f: dict, values: dict, errors: Dict[str, List[str]]) -> str:
 
 
 def _render(values: dict, errors: "Dict[str, List[str]]" = None, saved: bool = False,
-            api_key_masked: str = None) -> str:
+            api_key_masked: str = None, env_fingerprint: str = None) -> str:
     errors = errors or {}
+    if env_fingerprint is None:
+        env_fingerprint = _env_fingerprint(_ENV_PATH)
     sections = []
     for gkey, gtitle, gdesc in _GROUPS:
         fields_html = "".join(_render_field(f, values, errors)
@@ -616,6 +632,7 @@ def _render(values: dict, errors: "Dict[str, List[str]]" = None, saved: bool = F
 <p class="notice">%s <span>Saving applies most changes immediately. Fields marked <b>restart</b> need edge_collector restarted (socket/storage opened once at startup).</span></p>
 %s
 <form method="post" action="/setup" novalidate>
+<input type="hidden" name="_env_fingerprint" value="%s">
 %s
 <div class="actions"><button type="submit">Save</button></div>
 </form>
@@ -635,8 +652,8 @@ def _render(values: dict, errors: "Dict[str, List[str]]" = None, saved: bool = F
 %s
 %s
 %s
-</body></html>""" % (_CSS, _ICON_RESTART, banner, "".join(sections), focus_script,
-                     _ACTIVITY_SCRIPT, _API_KEY_SCRIPT, _PCM_REQUESTS_SCRIPT)
+</body></html>""" % (_CSS, _ICON_RESTART, banner, html.escape(env_fingerprint), "".join(sections),
+                     focus_script, _ACTIVITY_SCRIPT, _API_KEY_SCRIPT, _PCM_REQUESTS_SCRIPT)
 
 
 def _is_same_origin(request: Request) -> bool:
@@ -856,6 +873,29 @@ async def setup_post(request: Request):
         )
     form = await request.form()
     values = {f["key"]: str(form.get(f["key"], "")).strip() for f in _FIELDS}
+    submitted_fingerprint = str(form.get("_env_fingerprint", "")).strip()
+    current_fingerprint = _env_fingerprint(_ENV_PATH)
+    # Bo qua guard khi field rong (form cu tu ban image TRUOC khi tinh nang
+    # nay ton tai, khong co hidden field) - best-effort, giong triet ly
+    # "khong co gi de doi chieu thi cho qua" cua _is_same_origin() o tren.
+    if submitted_fingerprint and submitted_fingerprint != current_fingerprint:
+        # _current_values() (KHONG PHAI `values` vua submit) - trang loi nay
+        # tu render() tinh fingerprint MOI (khop file that tren dia) cho hidden
+        # field, nen NEU van hien thi `values` (du lieu cu bi tu choi) thi bam
+        # Save lai NGAY tren chinh trang loi (khong can reload) se qua duoc
+        # guard va ghi de mat thay doi ben ngoai - tai dien dung bug goc tinh
+        # nang nay sinh ra de chan. Nhat quan voi 2 nhanh loi khac trong ham
+        # nay (CSRF 403, OSError 500) deu da dung _current_values() - xem
+        # python-reviewer 2026-09-25 (finding Critical, verify thuc nghiem).
+        return HTMLResponse(
+            _render(_current_values(),
+                    errors={"_form": ["Config changed elsewhere since this page was loaded "
+                                       "(e.g. edited via SSH, or saved from another /setup tab) "
+                                       "- reopen /setup to see the latest values, then re-apply "
+                                       "your change."]},
+                    api_key_masked=_current_api_key_masked(request)),
+            status_code=409,
+        )
     errors = _validate(values)
     if errors:
         return HTMLResponse(

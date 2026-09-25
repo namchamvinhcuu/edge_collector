@@ -2,6 +2,8 @@
 """Test trang cau hinh /setup (settings_api.py) - khong dung lifespan/EdgeAgent
 that de tranh goi mang, chi test router doc lap voi mot FastAPI app rong."""
 import base64
+import html
+import re
 
 import pytest
 from fastapi import FastAPI
@@ -18,6 +20,32 @@ def client(tmp_path, monkeypatch):
     app = FastAPI()
     app.include_router(settings_api.router)
     return TestClient(app)
+
+
+def _extract_fingerprint(html_text):
+    """Lay gia tri hidden input _env_fingerprint tu HTML tra ve boi GET /setup
+    (xem _render()) - dung de mo phong 1 tab trinh duyet dang giu form."""
+    m = re.search(r'name="_env_fingerprint" value="([^"]*)"', html_text)
+    assert m is not None, "khong tim thay hidden input _env_fingerprint trong HTML"
+    return m.group(1)
+
+
+def _extract_rendered_form_values(html_text):
+    """Doc lai gia tri DANG HIEN THI tren 1 trang HTML da render boi _render()
+    cho tung field trong _FIELDS - mo phong DUNG nhung gi 1 trinh duyet that
+    se GUI LEN neu bam Save ma KHONG sua field nao, bat ke trang do dang hien
+    thi `values` (data POST cu, truoc fix) hay `_current_values()` (file that
+    tren dia, sau fix). KHONG hardcode _current_values() trong test - lam vay
+    se khong phan biet duoc buggy/fixed vi ca 2 deu tinh fingerprint MOI giong
+    het nhau, chi khac o VALUE hien thi cho tung field."""
+    result = {}
+    for f in settings_api._FIELDS:
+        key = f["key"]
+        m = re.search(r'id="%s" name="%s" value="([^"]*)"' % (re.escape(key), re.escape(key)),
+                      html_text)
+        assert m is not None, "khong tim thay input field %s trong HTML" % key
+        result[key] = html.unescape(m.group(1))
+    return result
 
 
 def _valid_form():
@@ -717,3 +745,154 @@ def test_setup_pcm_requests_requires_auth_when_token_set(client):
 
     resp_ok = client.get("/setup/pcm_requests", auth=("anyuser", "sekret"))
     assert resp_ok.status_code == 200
+
+
+def test_post_setup_accepts_matching_fingerprint(client, tmp_path):
+    """Happy path: fingerprint lay tu GET (khop dung noi dung .env hien tai)
+    duoc gui kem POST -> Save binh thuong, khong bi guard chan."""
+    env_path = tmp_path / ".env"
+    env_path.write_text("EDGE_MAIN_URL=http://odoo-main.local:8069\n")
+
+    resp_get = client.get("/setup")
+    assert resp_get.status_code == 200
+    fingerprint = _extract_fingerprint(resp_get.text)
+    assert fingerprint and fingerprint != "missing"
+
+    form = _valid_form()
+    form["_env_fingerprint"] = fingerprint
+    resp = client.post("/setup", data=form)
+
+    assert resp.status_code == 200
+    assert "Saved" in resp.text
+
+
+def test_post_setup_rejects_stale_fingerprint_and_preserves_external_change(client, tmp_path):
+    """Tai hien dung bug that da fix (xem docstring _env_fingerprint()): 1 tab
+    /setup con mo voi fingerprint CU (stale_fingerprint) trong luc .env bi sua
+    TRUC TIEP tu ben ngoai (mo phong SSH, hoac tab khac da Save truoc). Tab cu
+    Save 1 field KHONG lien quan (EDGE_NAME) phai bi TU CHOI (409), va quan
+    trong nhat: noi dung .env phai VAN CON dung gia tri da sua tu ben ngoai -
+    KHONG duoc ghi de boi gia tri tu form cua tab cu."""
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "EDGE_MAIN_URL=http://odoo-main.local:8069\n"
+        "EDGE_FORWARDED_ALLOW_IPS=127.0.0.1,::1\n"
+    )
+
+    resp_get = client.get("/setup")
+    assert resp_get.status_code == 200
+    stale_fingerprint = _extract_fingerprint(resp_get.text)
+
+    # Sua truc tiep .env "tu ben ngoai" - vd qua SSH - TRONG LUC tab /setup
+    # tren van con mo voi stale_fingerprint. Noi dung file doi -> fingerprint
+    # that su tren dia cung doi theo, khac han stale_fingerprint.
+    env_path.write_text(
+        "EDGE_MAIN_URL=http://odoo-main.local:8069\n"
+        "EDGE_FORWARDED_ALLOW_IPS=10.0.0.5/32\n"
+    )
+    external_content = env_path.read_text()
+
+    form = _valid_form()
+    form["_env_fingerprint"] = stale_fingerprint
+    form["EDGE_NAME"] = "Changed From Stale Tab"
+
+    resp = client.post("/setup", data=form)
+
+    assert resp.status_code == 409
+    assert "changed elsewhere" in resp.text.lower()
+    assert "reopen /setup" in resp.text.lower()
+    # Assertion CHINH chung minh guard hoat dong: .env phai VAN dung noi dung
+    # da sua ben ngoai (EDGE_FORWARDED_ALLOW_IPS=10.0.0.5/32), KHONG bi ghi de
+    # boi gia tri POST gui len - day chinh la du lieu da mat that trong bug goc.
+    assert env_path.read_text() == external_content
+    assert "Changed From Stale Tab" not in env_path.read_text()
+    assert "10.0.0.5/32" in env_path.read_text()
+
+
+def test_post_setup_conflict_page_resubmit_is_safe_noop_preserving_external_change(client, tmp_path):
+    """Regression cho finding Critical python-reviewer 2026-09-25: nhanh 409
+    TRUOC FIX goi _render(values, ...) (data SUBMIT CU bi tu choi) - nhung
+    _render() luon TU TINH fingerprint MOI cho hidden field bat ke tham so
+    `values` la gi, nen trang loi 409 vo tinh mang theo "ve thong hanh" moi
+    KEM THEO data cu hien thi tren form. Bam Save LAN 2 NGAY TREN CHINH TRANG
+    LOI (khong can reload /setup) se dua fingerprint moi + data CU do qua
+    duoc guard, ghi de mat thay doi ngoai luong - tai dien dung bug goc. Fix:
+    doi sang _render(_current_values(), ...), nhat quan voi 403/500.
+
+    Hanh vi DUNG sau fix: trang loi 409 hien thi CURRENT VALUES that su tren
+    dia (gom ca thay doi ngoai luong) kem fingerprint MOI khop file do. Neu
+    Nam bam Save lai NGAY tren trang loi ma KHONG sua gi, browser gui len
+    dung nhung gia tri dang hien thi (= _current_values()) - _write_env_file
+    ghi lai DUNG gia tri hien tai, safe no-op, KHONG mat thay doi ngoai luong."""
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "EDGE_MAIN_URL=http://odoo-main.local:8069\n"
+        "EDGE_FORWARDED_ALLOW_IPS=127.0.0.1,::1\n"
+    )
+
+    resp_get = client.get("/setup")
+    assert resp_get.status_code == 200
+    stale_fingerprint = _extract_fingerprint(resp_get.text)
+
+    # Sua truc tiep .env "tu ben ngoai" - vd qua SSH - TRONG LUC tab /setup
+    # tren van con mo voi stale_fingerprint.
+    env_path.write_text(
+        "EDGE_MAIN_URL=http://odoo-main.local:8069\n"
+        "EDGE_FORWARDED_ALLOW_IPS=10.0.0.5/32\n"
+    )
+    external_content_before = env_path.read_text()
+
+    form = _valid_form()
+    form["_env_fingerprint"] = stale_fingerprint
+
+    resp1 = client.post("/setup", data=form)
+
+    assert resp1.status_code == 409
+    assert env_path.read_text() == external_content_before
+
+    # Fingerprint lay TU CHINH trang loi 409 nay - KHONG goi lai GET /setup
+    # (dung dung kich ban "bam Save lai ngay tren trang loi").
+    fingerprint_from_error_page = _extract_fingerprint(resp1.text)
+    assert fingerprint_from_error_page != stale_fingerprint
+
+    # Mo phong Nam bam Save lai NGAY TREN TRANG LOI ma KHONG sua field nao -
+    # browser that se gui dung CAC GIA TRI DANG HIEN THI tren form loi do, DOC
+    # LAI TU HTML (khong hardcode _current_values() - buggy/fixed deu tinh
+    # fingerprint moi giong het nhau, chi khac o VALUE hien thi cho tung field,
+    # nen phai scrape dung HTML moi phan biet duoc 2 truong hop).
+    resubmit_data = _extract_rendered_form_values(resp1.text)
+    resubmit_data["_env_fingerprint"] = fingerprint_from_error_page
+
+    resp2 = client.post("/setup", data=resubmit_data)
+
+    # Guard cho qua (fingerprint khop - khong co gi doi them giua 2 request)
+    # NHUNG day phai la SAFE NO-OP: gia tri ghi xuong CHINH LA gia tri hien
+    # tai (gom ca thay doi ngoai luong), KHONG PHAI data cu bi tu choi o
+    # POST lan 1 - assertion CHINH chung minh finding da duoc fix dung.
+    assert resp2.status_code == 200
+    assert "Saved" in resp2.text
+    final_content = env_path.read_text()
+    assert "10.0.0.5/32" in final_content
+    assert "127.0.0.1,::1" not in final_content
+
+
+def test_post_setup_without_fingerprint_field_skips_guard(client, tmp_path):
+    """Backward-compat: client cu (form render TRUOC khi tinh nang nay ton tai,
+    khong co hidden field _env_fingerprint) van phai Save duoc binh thuong du
+    .env da doi tu ben ngoai - guard chi active khi co gia tri de doi chieu
+    (best-effort, cung triet ly voi _is_same_origin())."""
+    env_path = tmp_path / ".env"
+    env_path.write_text("EDGE_MAIN_URL=http://odoo-main.local:8069\n")
+
+    client.get("/setup")  # mo phong tab cu da load, KHONG dung fingerprint tu day
+
+    # .env doi tu ben ngoai sau khi tab (gia lap) da mo.
+    env_path.write_text("EDGE_MAIN_URL=http://odoo-main.local:8069\nEDGE_NAME=changed-externally\n")
+
+    form = _valid_form()
+    assert "_env_fingerprint" not in form  # form "cu", khong co hidden field
+
+    resp = client.post("/setup", data=form)
+
+    assert resp.status_code == 200
+    assert "Saved" in resp.text

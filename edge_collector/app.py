@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 
 from .config import settings
 from .inbound_api import router as inbound_router
@@ -91,6 +92,10 @@ def create_app() -> FastAPI:
     app.include_router(node_router)
     app.include_router(settings_router)
     app.include_router(ops_router)
+
+    @app.get("/", include_in_schema=False)
+    async def root_redirect():
+        return RedirectResponse(url="/setup")
 
     @app.get("/healthz")
     async def healthz():

@@ -56,9 +56,14 @@ def _encode_32(dtype: str, value: float):
     if dtype == "f32":
         raw = struct.pack(">f", float(value))
     elif dtype == "i32":
-        raw = struct.pack(">i", int(value))
+        # round(), KHONG int() - int() cat cut ve 0 (truncate), sai so dau
+        # phay dong cua "(value - offset) / scale" o command() co the ra
+        # 2.9999999999999996 thay vi 3.0 -> int() ghi nham 2 xuong thiet bi
+        # that (bien tan/PLC), khong co exception/log nao bao - xem
+        # Fix-History 2026-09-25 (phat hien qua node_agent copy code nay).
+        raw = struct.pack(">i", round(value))
     else:
-        raw = struct.pack(">I", int(value) & 0xFFFFFFFF)
+        raw = struct.pack(">I", round(value) & 0xFFFFFFFF)
     hi, lo = struct.unpack(">HH", raw)
     return [hi, lo]
 
@@ -176,7 +181,8 @@ class ModbusDriver(SourceDriver):
         try:
             dtype = (point.get("dtype") or "u16").lower()
             if dtype in ("i16", "u16"):
-                await self._client.write_register(addr, int(raw) & 0xFFFF, device_id=self._unit)
+                # round(), KHONG int() - cung ly do voi _encode_32() o tren.
+                await self._client.write_register(addr, round(raw) & 0xFFFF, device_id=self._unit)
             else:
                 await self._client.write_registers(addr, _encode_32(dtype, raw), device_id=self._unit)
             _logger.info("%s.%s: ghi reg=%s value=%s (raw=%s)", self.code, channel_code,
