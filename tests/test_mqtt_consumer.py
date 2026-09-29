@@ -21,7 +21,8 @@ import pytest
 import edge_collector.config as config
 import edge_collector.mqtt_consumer as mqtt_consumer
 from edge_collector.mqtt_consumer import (
-    MqttConsumer, _ack_topic, _cmd_topic, _parse_topic, _split_url, _topic_sibling,
+    MqttConsumer, _ack_topic, _canonical, _cmd_topic, _parse_topic, _sign,
+    _split_url, _topic_sibling, _verify_sig,
 )
 
 
@@ -86,9 +87,10 @@ def test_cmd_topic_returns_none_when_serial_contains_wildcard_char():
 
 
 class _FakeAgentManager:
-    def __init__(self):
+    def __init__(self, api_key=None):
         self.touched = []
         self.acked = []
+        self._api_key = api_key
 
     def touch_node(self, serial):
         self.touched.append(serial)
@@ -96,14 +98,28 @@ class _FakeAgentManager:
     def node_ack_command(self, cmd_id, ok, detail=""):
         self.acked.append((cmd_id, ok, detail))
 
+    def cached_node_api_key(self, serial):
+        """Gia lap Odoo da cap (hoac chua cap, tra None) api_key cho serial -
+        dung cho test xac minh HMAC trong _handle()."""
+        return self._api_key
+
 
 class _FakeAgent:
-    def __init__(self):
-        self.manager = _FakeAgentManager()
+    def __init__(self, api_key=None):
+        self.manager = _FakeAgentManager(api_key=api_key)
         self.readings = []
 
     def push_node_reading(self, serial, ch, v, s, q, ts, stable):
         self.readings.append((serial, ch, v, s, q, ts, stable))
+
+
+def _signed(api_key, payload):
+    """payload (KHONG co 'sig') -> bytes JSON da gan them 'sig' dung cho
+    dung api_key do - dung de dung test giong nhu node_agent that (mqtt_
+    uplink.py) se lam."""
+    body = dict(payload)
+    body["sig"] = _sign(api_key, payload)
+    return json.dumps(body).encode()
 
 
 @pytest.fixture()
@@ -268,6 +284,189 @@ def test_handle_measurement_lamp_state_tracked_even_when_forward_disabled():
     assert consumer.stats["items"] == 1
     assert consumer.lamps["relay_red"]["v"] == 1
     assert consumer.stats["forwarded"] == 0   # forward vao Odoo van tat, dung thiet ke
+
+
+# --- HMAC: _canonical()/_sign()/_verify_sig() (ham thuan tuy) ------------
+
+
+def test_canonical_sorts_keys_and_strips_whitespace():
+    assert _canonical({"b": 1, "a": 2}) == b'{"a":2,"b":1}'
+
+
+def test_canonical_is_independent_of_input_dict_key_order():
+    assert _canonical({"b": 1, "a": 2}) == _canonical({"a": 2, "b": 1})
+
+
+def test_sign_is_deterministic_for_same_key_and_payload():
+    assert _sign("k1", {"a": 1}) == _sign("k1", {"a": 1})
+
+
+def test_sign_differs_when_api_key_differs():
+    assert _sign("k1", {"a": 1}) != _sign("k2", {"a": 1})
+
+
+def test_sign_differs_when_payload_differs():
+    assert _sign("k1", {"a": 1}) != _sign("k1", {"a": 2})
+
+
+def test_verify_sig_accepts_correctly_signed_payload():
+    payload = {"ch": "temp", "v": 21.5}
+    data = dict(payload, sig=_sign("secret123", payload))
+
+    assert _verify_sig("secret123", data) is True
+
+
+def test_verify_sig_is_independent_of_original_dict_key_order():
+    """_canonical() dung sort_keys=True nen thu tu field trong dict GOC
+    (truoc khi ky/xac minh) khong duoc anh huong ket qua - node/edge co the
+    serialize object theo thu tu bat ky, mien noi dung field giong nhau."""
+    payload_signed_as = {"ch": "temp", "v": 1, "ts": 123}
+    payload_received_as = {"ts": 123, "v": 1, "ch": "temp"}
+    sig = _sign("secret123", payload_signed_as)
+    data = dict(payload_received_as, sig=sig)
+
+    assert _verify_sig("secret123", data) is True
+
+
+def test_verify_sig_rejects_payload_tampered_after_signing():
+    payload = {"ch": "temp", "v": 21.5}
+    sig = _sign("secret123", payload)
+    tampered = {"ch": "temp", "v": 999.0, "sig": sig}   # doi 1 field sau khi ky
+
+    assert _verify_sig("secret123", tampered) is False
+
+
+def test_verify_sig_rejects_signature_made_with_wrong_key():
+    payload = {"ch": "temp", "v": 21.5}
+    data = dict(payload, sig=_sign("attacker-key", payload))
+
+    assert _verify_sig("secret123", data) is False
+
+
+def test_verify_sig_rejects_missing_sig_field():
+    assert _verify_sig("secret123", {"ch": "temp", "v": 21.5}) is False
+
+
+def test_verify_sig_rejects_non_string_sig():
+    assert _verify_sig("secret123", {"ch": "temp", "sig": 12345}) is False
+
+
+# --- MqttConsumer._handle() + xac minh HMAC (tich hop qua object gia) ---
+
+
+def test_handle_measurement_without_sig_is_processed_as_before(monkeypatch):
+    """Tuong thich nguoc: ESP32 firmware cu khong biet ky, khong gui 'sig' -
+    PHAI van xu ly binh thuong du Odoo DA cap api_key cho serial nay (khong
+    ep buoc ky chi vi da co key cache)."""
+    monkeypatch.setattr(config.settings, "mqtt_consumer_forward", True)
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))
+
+    consumer._handle("fms/NODE1/meas", json.dumps({
+        "items": [{"ch": "temp", "v": 21.5}],
+    }).encode())
+
+    assert consumer.stats["sig_rejected"] == 0
+    assert consumer._agent.readings[0][:2] == ("NODE1", "temp")
+
+
+def test_handle_measurement_with_valid_sig_is_forwarded(monkeypatch):
+    monkeypatch.setattr(config.settings, "mqtt_consumer_forward", True)
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))
+    payload = {"items": [{"ch": "temp", "v": 21.5}]}
+
+    consumer._handle("fms/NODE1/meas", _signed("secret123", payload))
+
+    assert consumer.stats["sig_rejected"] == 0
+    assert consumer._agent.readings[0][:2] == ("NODE1", "temp")
+    assert consumer.stats["forwarded"] == 1
+
+
+def test_handle_measurement_with_invalid_sig_is_rejected_and_not_forwarded(monkeypatch):
+    """Doi 1 gia tri trong payload SAU khi da ky (gia mao) - sig cu khong con
+    khop, phai bi tu choi TRUOC ca touch_node()/push_node_reading()."""
+    monkeypatch.setattr(config.settings, "mqtt_consumer_forward", True)
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))
+    payload = {"items": [{"ch": "temp", "v": 21.5}]}
+    signed = json.loads(_signed("secret123", payload))
+    signed["items"][0]["v"] = 999.0
+
+    consumer._handle("fms/NODE1/meas", json.dumps(signed).encode())
+
+    assert consumer.stats["sig_rejected"] == 1
+    assert consumer._agent.readings == []
+    assert consumer._agent.manager.touched == []
+
+
+def test_handle_measurement_with_sig_but_no_cached_api_key_is_rejected(monkeypatch):
+    """Odoo chua cap api_key cho serial nay (cached_node_api_key tra None) -
+    khong the xac minh duoc thi TU CHOI, khong co duong ha tieu chuan."""
+    monkeypatch.setattr(config.settings, "mqtt_consumer_forward", True)
+    consumer = MqttConsumer(_FakeAgent(api_key=None))
+    payload = {"items": [{"ch": "temp", "v": 21.5}]}
+
+    consumer._handle("fms/NODE1/meas", _signed("any-key", payload))
+
+    assert consumer.stats["sig_rejected"] == 1
+    assert consumer._agent.readings == []
+
+
+def test_handle_status_with_valid_sig_is_processed_normally():
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))
+    payload = {"online": True, "cmd": True}
+
+    consumer._handle("fms/NODE1/status", _signed("secret123", payload))
+
+    assert consumer.stats["online"]["NODE1"] is True
+    assert consumer.caps["NODE1"] is True
+    assert consumer.stats["sig_rejected"] == 0
+
+
+def test_handle_status_with_invalid_sig_is_rejected_and_online_not_updated():
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))
+    payload = {"online": True, "cmd": True}
+    signed = json.loads(_signed("secret123", payload))
+    signed["online"] = False   # gia mao sau khi ky, sig cu khong con khop
+
+    consumer._handle("fms/NODE1/status", json.dumps(signed).encode())
+
+    assert consumer.stats["sig_rejected"] == 1
+    assert "NODE1" not in consumer.stats["online"]
+    assert "NODE1" not in consumer.caps
+
+
+def test_handle_status_offline_lwt_without_sig_still_marks_offline():
+    """LWT ({"online": false}) do BROKER tu phat khi mat ket noi voi node -
+    khong the ky dong (khong phai node chu dong gui), nen KHONG co 'sig'.
+    Logic 'sig tuy chon' phai cho qua binh thuong du serial nay DA co
+    api_key cache (khong ep buoc ky cho thong diep broker tu phat)."""
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))
+
+    consumer._handle("fms/NODE1/status", json.dumps({"online": False}).encode())
+
+    assert consumer.stats["online"]["NODE1"] is False
+    assert consumer.stats["sig_rejected"] == 0
+
+
+def test_handle_cmdack_with_valid_sig_is_acked_normally():
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))
+    payload = {"id": 5, "ok": True}
+
+    consumer._handle("fms/NODE1/cmdack", _signed("secret123", payload))
+
+    assert consumer._agent.manager.acked == [(5, True, "")]
+    assert consumer.stats["sig_rejected"] == 0
+
+
+def test_handle_cmdack_with_invalid_sig_is_rejected_and_not_acked():
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))
+    payload = {"id": 5, "ok": True}
+    signed = json.loads(_signed("secret123", payload))
+    signed["ok"] = False   # gia mao ket qua lenh sau khi ky
+
+    consumer._handle("fms/NODE1/cmdack", json.dumps(signed).encode())
+
+    assert consumer.stats["sig_rejected"] == 1
+    assert consumer._agent.manager.acked == []
 
 
 # --- MqttConsumer.publish_command() -------------------------------------

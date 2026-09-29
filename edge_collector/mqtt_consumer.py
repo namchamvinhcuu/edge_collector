@@ -55,6 +55,8 @@ hai ben dung chung mot client_id se da nhau ra khoi broker lien tuc.
 """
 import asyncio
 import collections
+import hashlib
+import hmac
 import json
 import logging
 import time
@@ -106,6 +108,7 @@ class MqttConsumer:
                                     # ra khoi tien trinh nay - xem publish_command()
             "cmd_acked": 0,     # so ack lenh nhan lai
             "ts_dropped": 0,    # so ban ghi co dau thoi gian vo ly
+            "sig_rejected": 0,  # so goi co "sig" nhung xac minh HMAC that bai
         }
         # serial -> firmware co biet nhan lenh qua MQTT khong (co "cmd" trong
         # chu de status). Khong doan: node tu khai.
@@ -213,6 +216,21 @@ class MqttConsumer:
         if not isinstance(data, dict):
             self.stats["bad"] += 1
             return
+
+        # HMAC tuy chon: node cu (ESP32 chua nang cap) khong gui "sig", van
+        # cho qua nhu truoc gio - khong pha tuong thich nguoc. Node MOI (co
+        # api_key da hoc qua /hello) tu ky, tu do co "sig" - luc do BAT BUOC
+        # xac minh dung, sai la tu choi luon (khong co duong ha tieu chuan).
+        # Cach nay tu dong dung cho ca LWT ({"online":false} broker tu phat,
+        # khong the ky dong) vi LWT khong co "sig" - khong can biet rieng
+        # "status"/"online" o day.
+        if "sig" in data:
+            api_key = self._agent.manager.cached_node_api_key(serial)
+            if not api_key or not _verify_sig(api_key, data):
+                self.stats["sig_rejected"] += 1
+                _logger.warning("node %s: sig sai/chua xac minh duoc tren "
+                                "chu de %s, bo qua goi", serial, kind)
+                return
 
         if kind == "status":
             online = bool(data.get("online"))
@@ -428,6 +446,26 @@ def _cmd_topic(serial: str):
         return None
     t = t.replace("+", serial, 1)
     return None if ("+" in t or "#" in t) else t
+
+
+def _canonical(payload: dict) -> bytes:
+    """JSON dang chinh tac (sorted keys, khong khoang trang) de ky/xac minh -
+    PHAI khop byte-for-byte voi ben ky (mqtt_uplink.py cua node_agent)."""
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _sign(api_key: str, payload: dict) -> str:
+    return hmac.new(api_key.encode(), _canonical(payload), hashlib.sha256).hexdigest()
+
+
+def _verify_sig(api_key: str, data: dict) -> bool:
+    """So sanh HMAC cua data (tru field "sig") voi "sig" dinh kem. Dung
+    hmac.compare_digest de tranh timing attack."""
+    sig = data.get("sig")
+    if not isinstance(sig, str):
+        return False
+    rest = {k: v for k, v in data.items() if k != "sig"}
+    return hmac.compare_digest(sig, _sign(api_key, rest))
 
 
 def _split_url(url: str):
