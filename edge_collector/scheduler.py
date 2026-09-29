@@ -9,6 +9,7 @@ chung khong lam mat mau, chi lam cham (PCM: 'nhu ngat vao xuong').
 """
 import asyncio
 import logging
+import random
 import time
 import uuid
 
@@ -46,6 +47,11 @@ class EdgeAgent:
         self._pending_rev_since = 0.0
         self._tasks: list = []
         self._stopping = asyncio.Event()
+        # Backoff rieng theo serial cho 429/5xx tu /pcm/api/v1/measurements
+        # (contract da chot voi pcm_base 2026-09-29) - xem hang so BACKOFF_*
+        # va _drain_serial() ben duoi.
+        self._backoff_until: dict = {}   # serial -> time.monotonic() duoc phep gui lai
+        self._backoff_delay: dict = {}   # serial -> delay hien tai (s), tang dan
 
     # ------------------------------------------------------------------
     # driver -> day gia tri vao buffer cho serial do (chua gui ngay)
@@ -159,7 +165,43 @@ class EdgeAgent:
     # song song voi nhau).
     MAX_CONCURRENT_SERIALS = 8
 
+    # 29/09: 429 ("edge busy, retry", Retry-After delta-seconds) hoac 5xx tu
+    # /pcm/api/v1/measurements -> gian nhip GUI TIEP cho DUNG serial do, tranh
+    # "dong loat gui lai" (thundering herd) khi Odoo vua phuc hoi sau downtime
+    # ma nhieu edge/serial cung retry cung luc. Retry-After la SAN (khong gui
+    # som hon), nhan doi moi lan lien tiep that bai, tran BACKOFF_CAP_S, +-
+    # jitter de cac serial khong dong bo nhau. Reset ve BACKOFF_BASE_S ngay
+    # khi 1 lan gui thanh cong. KHONG ap dung cho loi mang thuan tuy (khong co
+    # status_code — van theo nhip cu cua _sender_loop) va KHONG ap dung cho
+    # hello/config/heartbeat (khac loop, khac endpoint — dung theo dung pham
+    # vi contract da chot voi pcm_base).
+    BACKOFF_BASE_S = 1.0
+    BACKOFF_CAP_S = 30.0
+    BACKOFF_JITTER = 0.2
+
+    def _note_backoff(self, serial: str, retry_after) -> None:
+        delay = self._backoff_delay.get(serial, self.BACKOFF_BASE_S)
+        if isinstance(retry_after, (int, float)) and retry_after > 0:
+            delay = max(delay, float(retry_after))
+        delay = min(delay, self.BACKOFF_CAP_S)
+        jittered = delay * (1 + random.uniform(-self.BACKOFF_JITTER, self.BACKOFF_JITTER))
+        self._backoff_until[serial] = time.monotonic() + max(jittered, 0.0)
+        self._backoff_delay[serial] = min(delay * 2, self.BACKOFF_CAP_S)
+        # Chi log O DAY (luc SET), khong log o nhanh skip dau _drain_serial -
+        # _sender_loop co the goi lai serial nay moi 0.02s trong luc cho het
+        # backoff (khi serial KHAC dang sent_any=True), log o do se spam hang
+        # chuc dong/giay - xem python-reviewer 2026-09-29 (finding thieu log
+        # khien van hanh vien tuong nham bug khac khi thay 1 serial "im lang").
+        _logger.info("gian nhip gui %s: %.1fs (retry_after=%s)",
+                     serial, jittered, retry_after)
+
+    def _clear_backoff(self, serial: str) -> None:
+        self._backoff_until.pop(serial, None)
+        self._backoff_delay.pop(serial, None)
+
     async def _drain_serial(self, serial: str) -> bool:
+        if time.monotonic() < self._backoff_until.get(serial, 0.0):
+            return False    # dang trong thoi gian gian nhip cho serial nay
         sent_any = False
         for _ in range(self.MAX_MOI_VONG):
             row = self.store.outbox_oldest(serial)
@@ -173,8 +215,12 @@ class EdgeAgent:
             if not res.get("ok"):
                 _logger.info("gui measurements that bai cho %s: %s",
                              serial, res.get("error"))
+                status = res.get("status_code")
+                if status == 429 or (isinstance(status, int) and status >= 500):
+                    self._note_backoff(serial, res.get("retry_after"))
                 break    # giu thu tu — dung lai cho serial nay
             self.store.outbox_delete(row["id"])
+            self._clear_backoff(serial)
             sent_any = True
         return sent_any
 

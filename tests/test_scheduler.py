@@ -19,6 +19,7 @@ that, xac nhan qua ca truong hop assert False bi bat dung)."""
 import asyncio
 import contextlib
 import logging
+import time
 from unittest.mock import Mock
 
 import pytest
@@ -40,14 +41,21 @@ class _FakeAgent:
     khong goi __init__ that)."""
     _drain_serial = EdgeAgent._drain_serial
     _sender_loop = EdgeAgent._sender_loop
+    _note_backoff = EdgeAgent._note_backoff
+    _clear_backoff = EdgeAgent._clear_backoff
     MAX_MOI_VONG = EdgeAgent.MAX_MOI_VONG
     MAX_CONCURRENT_SERIALS = EdgeAgent.MAX_CONCURRENT_SERIALS
+    BACKOFF_BASE_S = EdgeAgent.BACKOFF_BASE_S
+    BACKOFF_CAP_S = EdgeAgent.BACKOFF_CAP_S
+    BACKOFF_JITTER = EdgeAgent.BACKOFF_JITTER
 
     def __init__(self, store, manager=None, odoo=None):
         self.store = store
         self.manager = manager or Mock(device_meta=Mock(return_value=None))
         self.odoo = odoo or Mock()
         self._stopping = asyncio.Event()
+        self._backoff_until: dict = {}
+        self._backoff_delay: dict = {}
 
 
 def _push_rows(store, serial, n, bid="b1"):
@@ -325,6 +333,212 @@ async def test_sender_loop_one_serial_exception_does_not_block_others(tmp_path, 
     # Exception KHONG bi nuot im lang - phai co log ERROR nhac ten serial B
     assert any(r.levelno >= logging.ERROR and "B" in r.getMessage()
                for r in caplog.records), caplog.text
+
+
+# ----------------------------------------------------------------------
+# _note_backoff / _clear_backoff (29/09) - backoff rieng theo serial cho
+# 429/5xx tu /pcm/api/v1/measurements, xem chu thich BACKOFF_* trong
+# scheduler.py.
+# ----------------------------------------------------------------------
+
+def test_note_backoff_doubles_delay_on_consecutive_calls(tmp_path):
+    store = Store(tmp_path / "t.db")
+    agent = _FakeAgent(store)
+
+    agent._note_backoff("S1", None)
+    delay_after_first = agent._backoff_delay["S1"]
+    agent._note_backoff("S1", None)
+    delay_after_second = agent._backoff_delay["S1"]
+
+    assert delay_after_first == pytest.approx(EdgeAgent.BACKOFF_BASE_S * 2)
+    assert delay_after_second > delay_after_first
+    assert delay_after_second == pytest.approx(EdgeAgent.BACKOFF_BASE_S * 4)
+
+
+def test_note_backoff_caps_delay_after_many_consecutive_calls(tmp_path):
+    """Goi lien tiep du nhieu lan de vuot BACKOFF_CAP_S neu khong co cap ->
+    _backoff_delay KHONG duoc vuot cap, va _backoff_until (co jitter +-20%)
+    cung khong vuot cap * (1 + jitter)."""
+    store = Store(tmp_path / "t.db")
+    agent = _FakeAgent(store)
+
+    before = time.monotonic()
+    for _ in range(10):
+        agent._note_backoff("S1", None)
+
+    assert agent._backoff_delay["S1"] == pytest.approx(EdgeAgent.BACKOFF_CAP_S)
+    max_until = before + EdgeAgent.BACKOFF_CAP_S * (1 + EdgeAgent.BACKOFF_JITTER) + 0.05
+    assert agent._backoff_until["S1"] <= max_until
+
+
+def test_note_backoff_uses_retry_after_as_floor_when_larger(tmp_path):
+    """delay hien tai (BASE=1.0) nho hon retry_after=20 -> phai dung 20 lam
+    san, KHONG dung delay cu nho hon (dung tinh than 'Retry-After la SAN')."""
+    store = Store(tmp_path / "t.db")
+    agent = _FakeAgent(store)
+    before = time.monotonic()
+
+    agent._note_backoff("S1", 20)
+
+    # jittered quanh 20 (+-20%) - toi thieu phai >= 20*(1-jitter)
+    min_expected = before + 20 * (1 - EdgeAgent.BACKOFF_JITTER) - 0.05
+    assert agent._backoff_until["S1"] >= min_expected
+    # va delay cho lan sau la 20*2=40 nhung tran BACKOFF_CAP_S=30
+    assert agent._backoff_delay["S1"] == pytest.approx(EdgeAgent.BACKOFF_CAP_S)
+
+
+def test_note_backoff_ignores_non_positive_retry_after(tmp_path):
+    """retry_after None/0/am -> khong duoc dung lam san (san = delay hien
+    tai, mac dinh BACKOFF_BASE_S) - tranh truong hop Odoo gui retry_after=0
+    hoac am lam vo hieu hoa backoff."""
+    store = Store(tmp_path / "t.db")
+    agent = _FakeAgent(store)
+    before = time.monotonic()
+
+    agent._note_backoff("S1", 0)
+
+    max_expected = before + EdgeAgent.BACKOFF_BASE_S * (1 + EdgeAgent.BACKOFF_JITTER) + 0.05
+    assert agent._backoff_until["S1"] <= max_expected
+
+
+def test_clear_backoff_removes_both_dict_entries(tmp_path):
+    store = Store(tmp_path / "t.db")
+    agent = _FakeAgent(store)
+    agent._note_backoff("S1", 10)
+    assert "S1" in agent._backoff_until and "S1" in agent._backoff_delay
+
+    agent._clear_backoff("S1")
+
+    assert "S1" not in agent._backoff_until
+    assert "S1" not in agent._backoff_delay
+
+
+def test_clear_backoff_on_serial_without_backoff_is_noop(tmp_path):
+    """Goi _clear_backoff cho serial CHUA tung backoff -> khong raise
+    (pop(..., None), khong phai del truc tiep)."""
+    store = Store(tmp_path / "t.db")
+    agent = _FakeAgent(store)
+
+    agent._clear_backoff("KHONG-TON-TAI")  # khong duoc raise KeyError
+
+    assert "KHONG-TON-TAI" not in agent._backoff_until
+
+
+# ----------------------------------------------------------------------
+# _drain_serial() + backoff (29/09)
+# ----------------------------------------------------------------------
+
+async def test_drain_serial_skips_when_in_backoff_window(tmp_path):
+    """Serial dang trong thoi gian backoff (_backoff_until o tuong lai) ->
+    return False NGAY, KHONG goi odoo.measurements() (spy khong duoc goi)."""
+    store = Store(tmp_path / "t.db")
+    _push_rows(store, "S1", 3)
+    measurements = Mock()
+    agent = _FakeAgent(store, odoo=Mock(measurements=measurements))
+    agent._backoff_until["S1"] = time.monotonic() + 60.0
+
+    sent_any = await agent._drain_serial("S1")
+
+    assert sent_any is False
+    measurements.assert_not_called()
+    assert store.outbox_count() == 3            # khong dong gi ca
+
+
+async def test_drain_serial_applies_backoff_on_429(tmp_path):
+    store = Store(tmp_path / "t.db")
+    _push_rows(store, "S1", 2)
+
+    async def measurements(serial, items, bid, seq, device_meta):
+        return {"ok": False, "error": "edge busy", "status_code": 429, "retry_after": 3}
+
+    agent = _FakeAgent(store, odoo=Mock(measurements=measurements))
+    before = time.monotonic()
+
+    sent_any = await agent._drain_serial("S1")
+
+    assert sent_any is False
+    assert "S1" in agent._backoff_until
+    assert agent._backoff_until["S1"] > before   # phai o TUONG LAI, khong phai 0/qua khu
+
+
+async def test_drain_serial_applies_backoff_on_5xx(tmp_path):
+    store = Store(tmp_path / "t.db")
+    _push_rows(store, "S1", 2)
+
+    async def measurements(serial, items, bid, seq, device_meta):
+        return {"ok": False, "error": "internal", "status_code": 503}
+
+    agent = _FakeAgent(store, odoo=Mock(measurements=measurements))
+    before = time.monotonic()
+
+    sent_any = await agent._drain_serial("S1")
+
+    assert sent_any is False
+    assert agent._backoff_until.get("S1", 0.0) > before
+
+
+async def test_drain_serial_pure_network_error_does_not_apply_backoff(tmp_path):
+    """Loi mang thuan tuy (khong co status_code, dung nhu OdooClient._post
+    khi httpx.HTTPError) -> KHONG ap dung backoff, giu nguyen nhip cu cua
+    _sender_loop (retry ngay vong sau, khong gian nhip them)."""
+    store = Store(tmp_path / "t.db")
+    _push_rows(store, "S1", 2)
+
+    async def measurements(serial, items, bid, seq, device_meta):
+        return {"ok": False, "error": "connection refused"}   # KHONG co status_code
+
+    agent = _FakeAgent(store, odoo=Mock(measurements=measurements))
+
+    sent_any = await agent._drain_serial("S1")
+
+    assert sent_any is False
+    assert "S1" not in agent._backoff_until
+    assert "S1" not in agent._backoff_delay
+
+
+async def test_drain_serial_success_clears_backoff_state(tmp_path):
+    """Serial tung bi backoff (con state cu) -> gui thanh cong lan nay ->
+    _clear_backoff duoc goi, state sach hoan toan."""
+    store = Store(tmp_path / "t.db")
+    _push_rows(store, "S1", 1)
+
+    async def measurements(serial, items, bid, seq, device_meta):
+        return {"ok": True}
+
+    agent = _FakeAgent(store, odoo=Mock(measurements=measurements))
+    agent._backoff_until["S1"] = time.monotonic() - 5.0   # da het han tu truoc
+    agent._backoff_delay["S1"] = 16.0
+
+    sent_any = await agent._drain_serial("S1")
+
+    assert sent_any is True
+    assert "S1" not in agent._backoff_until
+    assert "S1" not in agent._backoff_delay
+
+
+async def test_drain_serial_backoff_is_per_serial_no_cross_effect(tmp_path):
+    """Serial A dang backoff, serial B khong - drain B vAn xu ly binh
+    thuong, khong bi anh huong boi trang thai backoff cua A (dung comment
+    'Backoff rieng theo serial' trong scheduler.py)."""
+    store = Store(tmp_path / "t.db")
+    _push_rows(store, "A", 2)
+    _push_rows(store, "B", 2)
+    calls = []
+
+    async def measurements(serial, items, bid, seq, device_meta):
+        calls.append(serial)
+        return {"ok": True}
+
+    agent = _FakeAgent(store, odoo=Mock(measurements=measurements))
+    agent._backoff_until["A"] = time.monotonic() + 60.0
+
+    sent_a = await agent._drain_serial("A")
+    sent_b = await agent._drain_serial("B")
+
+    assert sent_a is False
+    assert calls == ["B", "B"]                  # A hoan toan khong goi measurements
+    assert sent_b is True
+    assert store.outbox_count() == 2            # 2 row cua A con nguyen, B da xoa het
 
 
 async def test_sender_loop_outbox_serials_itself_raising_does_not_kill_loop(caplog):

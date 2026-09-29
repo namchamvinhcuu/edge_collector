@@ -79,6 +79,22 @@ class OdooClient:
         if not r.is_success:
             body.setdefault("ok", False)
             body.setdefault("error", body.get("error") or ("http %s" % r.status_code))
+            body["status_code"] = r.status_code
+            if r.status_code == 429:
+                # Header header uu tien (dung dinh dang contract da chot voi
+                # pcm_base: delta-seconds, KHONG phai HTTP-date); body["retry_after"]
+                # la phong ho khi client nao do strip header - xem scheduler.py
+                # _drain_serial cho noi dung ap dung.
+                retry_after = None
+                raw = r.headers.get("Retry-After")
+                if raw is not None:
+                    try:
+                        retry_after = int(raw)
+                    except ValueError:
+                        retry_after = None
+                if retry_after is None:
+                    retry_after = body.get("retry_after")
+                body["retry_after"] = retry_after
             return body
         body.setdefault("ok", True)
         return body

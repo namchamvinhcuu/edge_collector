@@ -359,7 +359,7 @@ def test_handle_measurement_without_sig_is_processed_as_before(monkeypatch):
     PHAI van xu ly binh thuong du Odoo DA cap api_key cho serial nay (khong
     ep buoc ky chi vi da co key cache)."""
     monkeypatch.setattr(config.settings, "mqtt_consumer_forward", True)
-    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, khong phai credential that
 
     consumer._handle("fms/NODE1/meas", json.dumps({
         "items": [{"ch": "temp", "v": 21.5}],
@@ -371,7 +371,7 @@ def test_handle_measurement_without_sig_is_processed_as_before(monkeypatch):
 
 def test_handle_measurement_with_valid_sig_is_forwarded(monkeypatch):
     monkeypatch.setattr(config.settings, "mqtt_consumer_forward", True)
-    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, khong phai credential that
     payload = {"items": [{"ch": "temp", "v": 21.5}]}
 
     consumer._handle("fms/NODE1/meas", _signed("secret123", payload))
@@ -385,7 +385,7 @@ def test_handle_measurement_with_invalid_sig_is_rejected_and_not_forwarded(monke
     """Doi 1 gia tri trong payload SAU khi da ky (gia mao) - sig cu khong con
     khop, phai bi tu choi TRUOC ca touch_node()/push_node_reading()."""
     monkeypatch.setattr(config.settings, "mqtt_consumer_forward", True)
-    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, khong phai credential that
     payload = {"items": [{"ch": "temp", "v": 21.5}]}
     signed = json.loads(_signed("secret123", payload))
     signed["items"][0]["v"] = 999.0
@@ -411,7 +411,7 @@ def test_handle_measurement_with_sig_but_no_cached_api_key_is_rejected(monkeypat
 
 
 def test_handle_status_with_valid_sig_is_processed_normally():
-    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, khong phai credential that
     payload = {"online": True, "cmd": True}
 
     consumer._handle("fms/NODE1/status", _signed("secret123", payload))
@@ -422,7 +422,7 @@ def test_handle_status_with_valid_sig_is_processed_normally():
 
 
 def test_handle_status_with_invalid_sig_is_rejected_and_online_not_updated():
-    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, khong phai credential that
     payload = {"online": True, "cmd": True}
     signed = json.loads(_signed("secret123", payload))
     signed["online"] = False   # gia mao sau khi ky, sig cu khong con khop
@@ -439,7 +439,7 @@ def test_handle_status_offline_lwt_without_sig_still_marks_offline():
     khong the ky dong (khong phai node chu dong gui), nen KHONG co 'sig'.
     Logic 'sig tuy chon' phai cho qua binh thuong du serial nay DA co
     api_key cache (khong ep buoc ky cho thong diep broker tu phat)."""
-    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, khong phai credential that
 
     consumer._handle("fms/NODE1/status", json.dumps({"online": False}).encode())
 
@@ -448,7 +448,7 @@ def test_handle_status_offline_lwt_without_sig_still_marks_offline():
 
 
 def test_handle_cmdack_with_valid_sig_is_acked_normally():
-    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, khong phai credential that
     payload = {"id": 5, "ok": True}
 
     consumer._handle("fms/NODE1/cmdack", _signed("secret123", payload))
@@ -458,7 +458,7 @@ def test_handle_cmdack_with_valid_sig_is_acked_normally():
 
 
 def test_handle_cmdack_with_invalid_sig_is_rejected_and_not_acked():
-    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, khong phai credential that
     payload = {"id": 5, "ok": True}
     signed = json.loads(_signed("secret123", payload))
     signed["ok"] = False   # gia mao ket qua lenh sau khi ky

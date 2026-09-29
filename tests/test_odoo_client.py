@@ -21,7 +21,8 @@ def test_parse_error_body_list_wrapped_no_raise_regression():
 
     result = OdooClient._parse(r)
 
-    assert result == {"raw": [1, 2, 3], "ok": False, "error": "http 500"}
+    assert result == {"raw": [1, 2, 3], "ok": False, "error": "http 500",
+                       "status_code": 500}
 
 
 def test_parse_error_body_string_wrapped_no_raise_regression():
@@ -31,7 +32,8 @@ def test_parse_error_body_string_wrapped_no_raise_regression():
 
     result = OdooClient._parse(r)
 
-    assert result == {"raw": "oops", "ok": False, "error": "http 500"}
+    assert result == {"raw": "oops", "ok": False, "error": "http 500",
+                       "status_code": 500}
 
 
 def test_parse_success_body_number_wrapped():
@@ -76,7 +78,7 @@ def test_parse_error_body_dict_existing_error_not_overridden():
 
     result = OdooClient._parse(r)
 
-    assert result == {"error": "invalid api key", "ok": False}
+    assert result == {"error": "invalid api key", "ok": False, "status_code": 400}
 
 
 def test_parse_invalid_json_wrapped_as_raw_text_regression():
@@ -87,3 +89,55 @@ def test_parse_invalid_json_wrapped_as_raw_text_regression():
     result = OdooClient._parse(r)
 
     assert result == {"raw": "not a json body", "ok": True}
+
+
+# ----------------------------------------------------------------------
+# _parse() — 429 + Retry-After (contract chot 2026-09-29 voi pcm_base, xem
+# scheduler.py _note_backoff cho phia tieu thu).
+# ----------------------------------------------------------------------
+
+def test_parse_429_uses_retry_after_header_priority():
+    """Header Retry-After: 7 (delta-seconds) -> retry_after == 7, uu tien
+    header truoc, dung kieu int (khong phai string)."""
+    r = httpx.Response(status_code=429, json={"ok": False, "error": "edge busy"},
+                        headers={"Retry-After": "7"})
+
+    result = OdooClient._parse(r)
+
+    assert result["retry_after"] == 7
+    assert isinstance(result["retry_after"], int)
+    assert result["status_code"] == 429
+
+
+def test_parse_429_falls_back_to_body_retry_after_when_header_missing():
+    """Khong co header Retry-After, nhung body JSON co san field retry_after
+    (contract phong ho client strip header) -> dung gia tri do."""
+    r = httpx.Response(status_code=429,
+                        json={"ok": False, "error": "edge busy", "retry_after": 5})
+
+    result = OdooClient._parse(r)
+
+    assert result["retry_after"] == 5
+
+
+def test_parse_429_retry_after_none_when_absent_everywhere():
+    """Khong co header, khong co field trong body -> retry_after la None,
+    KHONG raise/crash (scheduler._note_backoff phai tu xu ly None nay bang
+    cach dung BACKOFF_BASE_S/delay hien tai lam san thay the)."""
+    r = httpx.Response(status_code=429, json={"ok": False, "error": "edge busy"})
+
+    result = OdooClient._parse(r)
+
+    assert result["retry_after"] is None
+
+
+def test_parse_500_has_status_code_but_no_retry_after_field():
+    """500 (khac 429) -> co status_code=500 nhung KHONG co field retry_after -
+    field nay chi co y nghia voi 429 theo contract, dung ap dat cho status
+    khac (scheduler doc res.get("retry_after") -> None mac dinh, khong sai)."""
+    r = httpx.Response(status_code=500, json={"ok": False, "error": "internal"})
+
+    result = OdooClient._parse(r)
+
+    assert result["status_code"] == 500
+    assert "retry_after" not in result
