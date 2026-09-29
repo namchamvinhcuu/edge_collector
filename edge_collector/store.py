@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""SQLite cuc bo cua edge — lich su do (Odoo chi giu snapshot last_*, xem
-pcm_channel.py) + hang doi gui offline (outbox) khi mat mang toi Main.
+"""SQLite cục bộ của edge — lịch sử đo (Odoo chỉ giữ snapshot last_*, xem
+pcm_channel.py) + hàng đợi gửi offline (outbox) khi mất mạng tới Main.
 
-Mot ket noi dung chung, khoa bang threading.Lock: luu luong cua mot edge (vai
-chuc kenh, vai giay/mau) khong dang de doi sang connection-pool/async driver.
+Một kết nối dùng chung, khóa bằng threading.Lock: lưu lượng của một edge (vài
+chục kênh, vài giây/mẫu) không đáng để đổi sang connection-pool/async driver.
 """
 import json
 import sqlite3
@@ -53,7 +53,7 @@ class Store:
         self._cx.commit()
 
     # ------------------------------------------------------------------
-    # kv — api_key, config_rev da ap dung, boot_id, config cache...
+    # kv — api_key, config_rev đã áp dụng, boot_id, config cache...
     # ------------------------------------------------------------------
     def kv_get(self, key: str, default=None):
         with self._lock:
@@ -76,8 +76,8 @@ class Store:
             self._cx.commit()
 
     # ------------------------------------------------------------------
-    # seq — moi serial mot boi dem rieng, dung lam (bid, seq) chong trung
-    # o Odoo (pcm.device._seen_batch, PCM-04).
+    # seq — mỗi serial một bộ đếm riêng, dùng làm (bid, seq) chống trùng
+    # ở Odoo (pcm.device._seen_batch, PCM-04).
     # ------------------------------------------------------------------
     def next_seq(self, serial: str) -> int:
         with self._lock:
@@ -128,7 +128,7 @@ class Store:
             return self._cx.execute("SELECT COUNT(*) FROM outbox").fetchone()[0]
 
     # ------------------------------------------------------------------
-    # history — phuc vu /api/latest va /api/stats (Odoo -> edge, dong bo).
+    # history — phục vụ /api/latest và /api/stats (Odoo -> edge, đồng bộ).
     # ------------------------------------------------------------------
     def history_insert_many(self, rows: Iterable[tuple]) -> None:
         rows = list(rows)
@@ -153,8 +153,8 @@ class Store:
         return {"ts": row[0], "v": row[1], "s": row[2], "q": row[3], "stable": bool(row[4])}
 
     def history_stats(self, serial: str, ch: str, since_ts: float) -> dict:
-        # q=8 (mo phong, xem pcm_simulator.py) khong tinh vao thong ke - gia tri
-        # 'hop le nhung gia' khong duoc lam nhieu ty le loi/trung binh thuc.
+        # q=8 (mô phỏng, xem pcm_simulator.py) không tính vào thống kê - giá trị
+        # 'hợp lệ nhưng giả' không được làm nhiễu tỷ lệ lỗi/trung bình thực.
         with self._lock:
             row = self._cx.execute(
                 "SELECT COUNT(*), "
@@ -177,9 +177,9 @@ class Store:
         }
 
     def history_recent(self, limit: int = 50) -> list:
-        """Cac muc do gan day nhat (moi serial/channel), moi ngan xep, dung
-        cho panel 'live activity' o /setup - KHONG loc theo serial/ch nhu
-        history_latest/history_stats (do phuc vu view tong hop nhieu node)."""
+        """Các mục đo gần đây nhất (mỗi serial/channel), mới nhất xếp, dùng
+        cho panel 'live activity' ở /setup - KHÔNG lọc theo serial/ch như
+        history_latest/history_stats (do phục vụ view tổng hợp nhiều node)."""
         with self._lock:
             rows = self._cx.execute(
                 "SELECT serial, ch, ts, v, s, q, stable FROM history "

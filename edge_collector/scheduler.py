@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""EdgeAgent — dieu phoi toan bo vong doi: hello (30s) -> config (debounce) ->
-thu thap (driver.on_value) -> dem/outbox -> gui /pcm/api/v1/measurements ->
-heartbeat -> hang doi in. Day la 'nguoi goi' o chieu edge -> Odoo; chieu
-nguoc lai (Odoo -> edge) do inbound_api.py phuc vu qua HTTP.
+"""EdgeAgent — điều phối toàn bộ vòng đời: hello (30s) -> config (debounce) ->
+thu thập (driver.on_value) -> đếm/outbox -> gửi /pcm/api/v1/measurements ->
+heartbeat -> hàng đợi in. Đây là 'người gọi' ở chiều edge -> Odoo; chiều
+ngược lại (Odoo -> edge) do inbound_api.py phục vụ qua HTTP.
 
-Nguyen tac: MOI request gui di deu qua outbox truoc (durable) - mat mang giua
-chung khong lam mat mau, chi lam cham (PCM: 'nhu ngat vao xuong').
+Nguyên tắc: MỌI request gửi đi đều qua outbox trước (durable) - mất mạng giữa
+chừng không làm mất mẫu, chỉ làm chậm (PCM: 'như ngắt vào xương').
 """
 import asyncio
 import logging
@@ -30,18 +30,18 @@ class EdgeAgent:
         self.store = Store(settings.sqlite_path)
         self.odoo = OdooClient(self.store)
         self.manager = SourceManager(self._on_value)
-        # Ben DOC cua duong MQTT. Mac dinh chi DEM, khong day vao outbox —
-        # xem chu thich dau mqtt_consumer.py (che do bong).
+        # Bên ĐỌC của đường MQTT. Mặc định chỉ ĐẾM, không đẩy vào outbox —
+        # xem chú thích đầu mqtt_consumer.py (chế độ bóng).
         self.mqtt_consumer = MqttConsumer(self)
-        # SourceManager can duong MQTT de day lenh xuong node. Noc vao day
-        # thay vi truyen qua __init__ de khong doi chu ky ham dung cua no
-        # — manager chi dung khi thuoc tinh nay co, va tu quay ve hang doi
-        # poll khi khong.
+        # SourceManager cần đường MQTT để đẩy lệnh xuống node. Móc vào đây
+        # thay vì truyền qua __init__ để không đổi chữ ký hàm dựng của nó
+        # — manager chỉ dùng khi thuộc tính này có, và tự quay về hàng đợi
+        # poll khi không.
         self.manager.mqtt_cmd = self.mqtt_consumer
-        self._pending: dict = {}          # serial -> list[item dict], cho tung dot flush
-        # (serial, ch) -> {"v","s","q","stable","ts"} lan gan nhat DA enqueue len
-        # outbox (khac history - history luon ghi moi lan doc). Dung cho
-        # change-detection o _on_value(): xem DEFAULT_HEARTBEAT_S.
+        self._pending: dict = {}          # serial -> list[item dict], cho từng đợt flush
+        # (serial, ch) -> {"v","s","q","stable","ts"} lần gần nhất ĐÃ enqueue lên
+        # outbox (khác history - history luôn ghi mỗi lần đọc). Dùng cho
+        # change-detection ở _on_value(): xem DEFAULT_HEARTBEAT_S.
         self._last_enqueued: dict = {}
         self._boot_id = self.store.kv_get("boot_id")
         if not self._boot_id:
@@ -51,21 +51,21 @@ class EdgeAgent:
         self._pending_rev_since = 0.0
         self._tasks: list = []
         self._stopping = asyncio.Event()
-        # Backoff rieng theo serial cho 429/5xx tu /pcm/api/v1/measurements
-        # (contract da chot voi pcm_base 2026-09-29) - xem hang so BACKOFF_*
-        # va _drain_serial() ben duoi.
-        self._backoff_until: dict = {}   # serial -> time.monotonic() duoc phep gui lai
-        self._backoff_delay: dict = {}   # serial -> delay hien tai (s), tang dan
+        # Backoff riêng theo serial cho 429/5xx từ /pcm/api/v1/measurements
+        # (contract đã chốt với pcm_base 2026-09-29) - xem hằng số BACKOFF_*
+        # và _drain_serial() bên dưới.
+        self._backoff_until: dict = {}   # serial -> time.monotonic() được phép gửi lại
+        self._backoff_delay: dict = {}   # serial -> delay hiện tại (s), tăng dần
 
-    # 29/09 (contract chot voi pcm_base): channel co must_send_every=False (khong
-    # phai counter/trigger/raw-forward - xem manager.channel_meta_for()) duoc phep
-    # BO QUA enqueue-len-Odoo khi gia tri/quality/stable y het lan gui truoc (vd
-    # can dien tu dung yen lau, tranh flood outbox - xem Fix-History 2026-09-29).
-    # Van GUI LAI dinh ky theo max_age_ms*0.5 cua channel do (rieng tung channel,
-    # KHONG dung 1 hang so chung - nguong lech nhau nhieu giua cac loai sensor)
-    # de UI Odoo khong hien "khong doi" qua lau. Thieu/sai max_age_ms -> fallback
-    # DEFAULT_HEARTBEAT_S. history_insert_many() (local, Live activity) KHONG bi
-    # anh huong - van ghi MOI lan doc nhu cu.
+    # 29/09 (contract chốt với pcm_base): channel có must_send_every=False (không
+    # phải counter/trigger/raw-forward - xem manager.channel_meta_for()) được phép
+    # BỎ QUA enqueue-lên-Odoo khi giá trị/quality/stable y hệt lần gửi trước (vd
+    # cân điện tử đứng yên lâu, tránh flood outbox - xem Fix-History 2026-09-29).
+    # Vẫn GỬI LẠI định kỳ theo max_age_ms*0.5 của channel đó (riêng từng channel,
+    # KHÔNG dùng 1 hằng số chung - ngưỡng lệch nhau nhiều giữa các loại sensor)
+    # để UI Odoo không hiện "không đổi" quá lâu. Thiếu/sai max_age_ms -> fallback
+    # DEFAULT_HEARTBEAT_S. history_insert_many() (local, Live activity) KHÔNG bị
+    # ảnh hưởng - vẫn ghi MỌI lần đọc như cũ.
     DEFAULT_HEARTBEAT_S = 5.0
 
     def _should_skip_duplicate(self, serial, ch, v, s, q, stable) -> bool:
@@ -88,17 +88,17 @@ class EdgeAgent:
         return False
 
     # ------------------------------------------------------------------
-    # driver -> day gia tri vao buffer cho serial do (chua gui ngay)
+    # driver -> đẩy giá trị vào buffer cho serial đó (chưa gửi ngay)
     # ------------------------------------------------------------------
     def _on_value(self, serial, ch, v, s, q, ts, stable):
         try:
             self.store.history_insert_many([(serial, ch, ts or time.time(), v, s, int(q or 0),
                                              1 if stable else 0)])
         except Exception:                                            # noqa: BLE001
-            # history la phu tro cho Live activity local - loi o day KHONG duoc
-            # phep chan duong outbox/Odoo (durable-first, xem finding python-reviewer
-            # 2026-09-29: dao thu tu truoc do vo tinh lam mat ca outbox neu history throw).
-            _logger.exception("loi ghi history cho %s/%s", serial, ch)
+            # history là phụ trợ cho Live activity local - lỗi ở đây KHÔNG được
+            # phép chặn đường outbox/Odoo (durable-first, xem finding python-reviewer
+            # 2026-09-29: đảo thứ tự trước đó vô tình làm mất cả outbox nếu history throw).
+            _logger.exception("lỗi ghi history cho %s/%s", serial, ch)
         if self._should_skip_duplicate(serial, ch, v, s, q, stable):
             return
         item = {"ch": ch, "v": v, "s": s, "q": int(q or 0), "stable": stable}
@@ -107,8 +107,8 @@ class EdgeAgent:
         self._pending.setdefault(serial, []).append(item)
 
     def push_node_reading(self, serial, ch, v, s, q, ts, stable):
-        """Loi vao tu node_api.py (node HTTP day thang, kind=http_node) — cung
-        mot duong ong voi driver.on_reading()."""
+        """Lối vào từ node_api.py (node HTTP đẩy thẳng, kind=http_node) — cùng
+        một đường ống với driver.on_reading()."""
         self._on_value(serial, ch, v, s, q, ts, stable)
 
     async def forward_node_heartbeat(self, serial: str, meta: dict) -> dict:
@@ -150,10 +150,10 @@ class EdgeAgent:
                     mqtt_connected=self._mqtt_connected(),
                 )
                 if not res.get("ok"):
-                    _logger.warning("hello that bai: %s", res.get("error"))
+                    _logger.warning("hello thất bại: %s", res.get("error"))
                 await self.odoo.source_status(self.manager.status_rows(), self._mqtt_connected())
             except Exception:                                        # noqa: BLE001
-                _logger.exception("loi trong hello_loop")
+                _logger.exception("lỗi trong hello_loop")
             await asyncio.sleep(settings.hello_interval_s)
 
     async def _config_loop(self):
@@ -172,14 +172,14 @@ class EdgeAgent:
                         await self.manager.apply_config(cfg)
                         self.store.kv_set("config_rev", rev)
                         applied_rev = rev
-                        _logger.info("da ap dung config_version=%s", rev)
+                        _logger.info("đã áp dụng config_version=%s", rev)
             except Exception:                                        # noqa: BLE001
-                _logger.exception("loi trong config_loop")
+                _logger.exception("lỗi trong config_loop")
             await asyncio.sleep(settings.config_poll_interval_s)
 
     async def _flush_loop(self):
-        """Gop buffer -> outbox moi submit_interval_s (bid=boot_id co dinh,
-        seq tang dan ben ngoai — cho phep dedup (serial,bid,seq) o Odoo)."""
+        """Gộp buffer -> outbox mỗi submit_interval_s (bid=boot_id cố định,
+        seq tăng dần bên ngoài — cho phép dedup (serial,bid,seq) ở Odoo)."""
         while not self._stopping.is_set():
             await asyncio.sleep(settings.submit_interval_s)
             if not self._pending:
@@ -189,34 +189,34 @@ class EdgeAgent:
                 seq = self.store.next_seq(serial)
                 self.store.outbox_push(serial, self._boot_id, seq, {"items": items})
 
-    # 21/09: mot vong CHI gui mot ban ghi roi ngu 0,2 s — toi da ~2,2 ban/giay.
-    # _flush_loop day ra 1/submit_interval_s = 4 ban/giay. San xuat > tieu thu
-    # nen ton kho lon dan va do tre tang theo thoi gian: "chay mot hoi la no
-    # tre so voi can nhay thuc te". Rut can ton kho trong mot vong, va chi ngu
-    # khi khong con gi de gui.
+    # 21/09: một vòng CHỈ gửi một bản ghi rồi ngủ 0,2 s — tối đa ~2,2 bản/giây.
+    # _flush_loop đẩy ra 1/submit_interval_s = 4 bản/giây. Sản xuất > tiêu thụ
+    # nên tồn kho lớn dần và độ trễ tăng theo thời gian: "chạy một hồi là nó
+    # trễ so với cân nhảy thực tế". Rút cạn tồn kho trong một vòng, và chỉ ngủ
+    # khi không còn gì để gửi.
     MAX_MOI_VONG = 30
 
-    # 24/09: rut can outbox tung serial TUAN TU (1 luc 1 serial) khong scale
-    # khi so serial len toi hang tram - 1 vong drain se can (so serial) lan
-    # round-trip HTTP noi tiep toi Odoo, co the vuot han submit_interval_s va
-    # lam do tre forward tang dan theo thoi gian (KHONG mat du lieu - outbox
-    # van giu - chi cham). Gioi han so serial gui DONG THOI bang semaphore,
-    # tha long chieu song song ma khong ban pha Odoo bang hang tram request
-    # cung luc. Thu tu ben TRONG 1 serial VAN tuan tu (giu dung invariant
-    # "dung lai cho serial nay khi loi" - chi serial KHAC nhau moi chay
-    # song song voi nhau).
+    # 24/09: rút cạn outbox từng serial TUẦN TỰ (1 lúc 1 serial) không scale
+    # khi số serial lên tới hàng trăm - 1 vòng drain sẽ cần (số serial) lần
+    # round-trip HTTP nối tiếp tới Odoo, có thể vượt hẳn submit_interval_s và
+    # làm độ trễ forward tăng dần theo thời gian (KHÔNG mất dữ liệu - outbox
+    # vẫn giữ - chỉ chậm). Giới hạn số serial gửi ĐỒNG THỜI bằng semaphore,
+    # thả lỏng chiều song song mà không bắn phá Odoo bằng hàng trăm request
+    # cùng lúc. Thứ tự bên TRONG 1 serial VẪN tuần tự (giữ đúng invariant
+    # "dừng lại cho serial này khi lỗi" - chỉ serial KHÁC nhau mới chạy
+    # song song với nhau).
     MAX_CONCURRENT_SERIALS = 8
 
-    # 29/09: 429 ("edge busy, retry", Retry-After delta-seconds) hoac 5xx tu
-    # /pcm/api/v1/measurements -> gian nhip GUI TIEP cho DUNG serial do, tranh
-    # "dong loat gui lai" (thundering herd) khi Odoo vua phuc hoi sau downtime
-    # ma nhieu edge/serial cung retry cung luc. Retry-After la SAN (khong gui
-    # som hon), nhan doi moi lan lien tiep that bai, tran BACKOFF_CAP_S, +-
-    # jitter de cac serial khong dong bo nhau. Reset ve BACKOFF_BASE_S ngay
-    # khi 1 lan gui thanh cong. KHONG ap dung cho loi mang thuan tuy (khong co
-    # status_code — van theo nhip cu cua _sender_loop) va KHONG ap dung cho
-    # hello/config/heartbeat (khac loop, khac endpoint — dung theo dung pham
-    # vi contract da chot voi pcm_base).
+    # 29/09: 429 ("edge busy, retry", Retry-After delta-seconds) hoặc 5xx từ
+    # /pcm/api/v1/measurements -> giãn nhịp GỬI TIẾP cho ĐÚNG serial đó, tránh
+    # "đồng loạt gửi lại" (thundering herd) khi Odoo vừa phục hồi sau downtime
+    # mà nhiều edge/serial cùng retry cùng lúc. Retry-After là SÀN (không gửi
+    # sớm hơn), nhân đôi mỗi lần liên tiếp thất bại, trần BACKOFF_CAP_S, +-
+    # jitter để các serial không đồng bộ nhau. Reset về BACKOFF_BASE_S ngay
+    # khi 1 lần gửi thành công. KHÔNG áp dụng cho lỗi mạng thuần túy (không có
+    # status_code — vẫn theo nhịp cũ của _sender_loop) và KHÔNG áp dụng cho
+    # hello/config/heartbeat (khác loop, khác endpoint — đúng theo đúng phạm
+    # vi contract đã chốt với pcm_base).
     BACKOFF_BASE_S = 1.0
     BACKOFF_CAP_S = 30.0
     BACKOFF_JITTER = 0.2
@@ -229,12 +229,12 @@ class EdgeAgent:
         jittered = delay * (1 + random.uniform(-self.BACKOFF_JITTER, self.BACKOFF_JITTER))
         self._backoff_until[serial] = time.monotonic() + max(jittered, 0.0)
         self._backoff_delay[serial] = min(delay * 2, self.BACKOFF_CAP_S)
-        # Chi log O DAY (luc SET), khong log o nhanh skip dau _drain_serial -
-        # _sender_loop co the goi lai serial nay moi 0.02s trong luc cho het
-        # backoff (khi serial KHAC dang sent_any=True), log o do se spam hang
-        # chuc dong/giay - xem python-reviewer 2026-09-29 (finding thieu log
-        # khien van hanh vien tuong nham bug khac khi thay 1 serial "im lang").
-        _logger.info("gian nhip gui %s: %.1fs (retry_after=%s)",
+        # Chỉ log Ở ĐÂY (lúc SET), không log ở nhánh skip đầu _drain_serial -
+        # _sender_loop có thể gọi lại serial này mỗi 0.02s trong lúc chờ hết
+        # backoff (khi serial KHÁC đang sent_any=True), log ở đó sẽ spam hàng
+        # chục dòng/giây - xem python-reviewer 2026-09-29 (finding thiếu log
+        # khiến vận hành viên tưởng nhầm bug khác khi thấy 1 serial "im lặng").
+        _logger.info("giãn nhịp gửi %s: %.1fs (retry_after=%s)",
                      serial, jittered, retry_after)
 
     def _clear_backoff(self, serial: str) -> None:
@@ -243,7 +243,7 @@ class EdgeAgent:
 
     async def _drain_serial(self, serial: str) -> bool:
         if time.monotonic() < self._backoff_until.get(serial, 0.0):
-            return False    # dang trong thoi gian gian nhip cho serial nay
+            return False    # đang trong thời gian giãn nhịp cho serial này
         sent_any = False
         for _ in range(self.MAX_MOI_VONG):
             row = self.store.outbox_oldest(serial)
@@ -255,12 +255,12 @@ class EdgeAgent:
                 serial, row["payload"]["items"], row["bid"], row["seq"],
                 device_meta)
             if not res.get("ok"):
-                _logger.info("gui measurements that bai cho %s: %s",
+                _logger.info("gửi measurements thất bại cho %s: %s",
                              serial, res.get("error"))
                 status = res.get("status_code")
                 if status == 429 or (isinstance(status, int) and status >= 500):
                     self._note_backoff(serial, res.get("retry_after"))
-                break    # giu thu tu — dung lai cho serial nay
+                break    # giữ thứ tự — dừng lại cho serial này
             self.store.outbox_delete(row["id"])
             self._clear_backoff(serial)
             sent_any = True
@@ -278,29 +278,29 @@ class EdgeAgent:
             try:
                 serials = self.store.outbox_serials()
                 if serials:
-                    # return_exceptions=True: 1 serial raise (vd loi mang la, bug
-                    # driver...) KHONG duoc phep giet ca gather() - mac dinh cua
-                    # asyncio.gather() se lam CA task _sender_loop chet vinh vien
-                    # (khong watchdog tu respawn), y het loai bug OdooClient._parse
-                    # da fix 2026-09-24 nhung ap dung cho MOI nguon loi tuong lai,
-                    # khong chi rieng loi do.
+                    # return_exceptions=True: 1 serial raise (vd lỗi mạng lạ, bug
+                    # driver...) KHÔNG được phép giết cả gather() - mặc định của
+                    # asyncio.gather() sẽ làm CẢ task _sender_loop chết vĩnh viễn
+                    # (không watchdog tự respawn), y hệt loại bug OdooClient._parse
+                    # đã fix 2026-09-24 nhưng áp dụng cho MỌI nguồn lỗi tương lai,
+                    # không chỉ riêng lỗi đó.
                     results = await asyncio.gather(
                         *(_drain_with_limit(s) for s in serials), return_exceptions=True)
                     for serial, res in zip(serials, results):
                         if isinstance(res, BaseException):
-                            _logger.exception("loi khong luong truoc khi gui outbox cho %s",
+                            _logger.exception("lỗi không lường trước khi gửi outbox cho %s",
                                               serial, exc_info=res)
                             continue
                         if res:
                             sent_any = True
             except Exception:                                          # noqa: BLE001
-                # Cung pattern try/except+log nhu 5 vong lap con lai cua EdgeAgent
+                # Cùng pattern try/except+log như 5 vòng lặp còn lại của EdgeAgent
                 # (_hello_loop/_config_loop/_heartbeat_loop/_print_loop/_gc_loop) -
-                # truoc day _sender_loop la vong DUY NHAT thieu, nen 1 loi ngoai du
-                # kien (vd outbox_serials() tu no loi) se giet ca vong lap ma
-                # khong ai biet - xem review 2026-09-24 (cau hoi scale hang tram
-                # sensor cua Nam).
-                _logger.exception("loi trong sender_loop")
+                # trước đây _sender_loop là vòng DUY NHẤT thiếu, nên 1 lỗi ngoài dự
+                # kiến (vd outbox_serials() tự nó lỗi) sẽ giết cả vòng lặp mà
+                # không ai biết - xem review 2026-09-24 (câu hỏi scale hàng trăm
+                # sensor của Nam).
+                _logger.exception("lỗi trong sender_loop")
             await asyncio.sleep(0.02 if sent_any else 1.0)
 
     async def _heartbeat_loop(self):
@@ -312,7 +312,7 @@ class EdgeAgent:
                         "config_version": self.manager.config_rev,
                     })
                 except Exception:                                    # noqa: BLE001
-                    _logger.exception("heartbeat that bai cho %s", serial)
+                    _logger.exception("heartbeat thất bại cho %s", serial)
             await asyncio.sleep(settings.heartbeat_interval_s)
 
     async def _print_loop(self):
@@ -324,9 +324,9 @@ class EdgeAgent:
                     result = await send_job(job)
                     await self.odoo.print_job_ack(job["id"], result.get("ok", False),
                                                   result.get("error") or "")
-                    continue          # co job vua roi -> kiem tra ngay job ke tiep
+                    continue          # có job vừa rồi -> kiểm tra ngay job kế tiếp
             except Exception:                                        # noqa: BLE001
-                _logger.exception("loi trong print_loop")
+                _logger.exception("lỗi trong print_loop")
             await asyncio.sleep(settings.print_poll_interval_s)
 
     async def _gc_loop(self):
@@ -334,5 +334,5 @@ class EdgeAgent:
             cutoff = time.time() - HISTORY_RETENTION_DAYS * 86400
             removed = self.store.history_gc(cutoff)
             if removed:
-                _logger.info("da don %d dong lich su cu hon %d ngay", removed, HISTORY_RETENTION_DAYS)
+                _logger.info("đã dọn %d dòng lịch sử cũ hơn %d ngày", removed, HISTORY_RETENTION_DAYS)
             await asyncio.sleep(3600)

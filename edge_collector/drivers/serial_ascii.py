@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Nguon 'serial' — cong USB serial cam thang vao edge (can · caliper ...),
-theo cu phap cua PCM 계측기 프로파일 (pcm.serial.profile._as_config()).
+"""Nguồn 'serial' — cổng USB serial cắm thẳng vào edge (cân · caliper ...),
+theo cú pháp của PCM 계측기 프로파일 (pcm.serial.profile._as_config()).
 
-Mot nguon serial = MOT kenh (pcm_source.py: 'ch = self.channel_ids[:1]').
+Một nguồn serial = MỘT kênh (pcm_source.py: 'ch = self.channel_ids[:1]').
 profile.link:
-    ascii   — moi dong ket thuc bang 'terminator', boc tach bang 'pattern'
-              (regex), gia tri o value_group, don vi o unit_group, on dinh
-              quyet dinh boi stable_group == stable_ok.
-    modbus  — thiet bi RS-485 mot thanh ghi duy nhat tren cong serial nay.
+    ascii   — mỗi dòng kết thúc bằng 'terminator', bóc tách bằng 'pattern'
+              (regex), giá trị ở value_group, đơn vị ở unit_group, ổn định
+              quyết định bởi stable_group == stable_ok.
+    modbus  — thiết bị RS-485 một thanh ghi duy nhất trên cổng serial này.
 """
 import asyncio
 import re
@@ -57,7 +57,7 @@ class SerialDriver(SourceDriver):
             self._mb.close()
             self._mb = None
 
-    # -- ASCII (can dien tu, caliper ...) ------------------------------
+    # -- ASCII (cân điện tử, caliper ...) ------------------------------
     async def _start_ascii(self):
         p = self.profile
         parity_map = {"none": pyserial.PARITY_NONE, "even": pyserial.PARITY_EVEN,
@@ -89,8 +89,8 @@ class SerialDriver(SourceDriver):
             return None
         p = self.profile
         try:
-            # mot so can (A&D/CAS) dem khoang trang giua dau +/- va so o dinh
-            # dang do rong co dinh (vd "+     18.13") - bo trang truoc khi doi float.
+            # một số cân (A&D/CAS) đệm khoảng trắng giữa dấu +/- và số ở định
+            # dạng độ rộng cố định (vd "+     18.13") - bỏ trắng trước khi đổi float.
             raw_val = re.sub(r"\s+", "", m.group(p.get("value_group") or 1))
             value = float(raw_val)
         except (IndexError, ValueError, TypeError):
@@ -111,7 +111,7 @@ class SerialDriver(SourceDriver):
         await loop.run_in_executor(None, self._ser.write, raw.encode() + self._term)
         return {"ok": True, "status": "ok"}
 
-    # -- Modbus-RTU mot thanh ghi (cam bien RS-485 don gian) -----------
+    # -- Modbus-RTU một thanh ghi (cảm biến RS-485 đơn giản) -----------
     async def _start_modbus(self):
         from pymodbus.client import AsyncModbusSerialClient
         self._mb = AsyncModbusSerialClient(
@@ -120,7 +120,7 @@ class SerialDriver(SourceDriver):
         )
         await self._mb.connect()
         if not self._mb.connected:
-            raise ConnectionError("khong ket noi duoc %s" % self.cfg.get("endpoint"))
+            raise ConnectionError("không kết nối được %s" % self.cfg.get("endpoint"))
 
     async def _read_modbus(self) -> float:
         p = self.profile
@@ -142,7 +142,7 @@ class SerialDriver(SourceDriver):
             v = struct.unpack(">f" if dtype == "f32" else (">i" if dtype == "i32" else ">I"), raw)[0]
         return v * (p.get("mb_scale") or 1) + (p.get("mb_offset") or 0)
 
-    # -- vong lap chung -------------------------------------------------
+    # -- vòng lặp chung -------------------------------------------------
     async def _loop(self):
         is_modbus = self.profile.get("link") == "modbus"
         poll_ms = self.profile.get("mb_poll_ms") if is_modbus else 200
@@ -173,7 +173,7 @@ class SerialDriver(SourceDriver):
 
     async def command(self, channel_code: str, cmd: str, value=None) -> dict:
         if self.profile.get("link") == "modbus":
-            return {"ok": False, "error": "lenh khong ho tro tren serial+modbus"}
+            return {"ok": False, "error": "lệnh không hỗ trợ trên serial+modbus"}
         raw = {"zero": self.profile.get("cmd_zero"), "tare": self.profile.get("cmd_tare"),
                "read": self.profile.get("cmd_read")}.get(cmd)
         return await self._cmd_ascii(raw)

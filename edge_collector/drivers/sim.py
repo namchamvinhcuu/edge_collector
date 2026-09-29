@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Nguon 'sim' — tao gia tri gia cho tung kenh gan vao nguon nay, khong can
-phan cung. Dung de dung thu duong ong edge <-> Odoo (khac voi pcm.simulator,
-model do chay O PHIA ODOO va khong lien quan edge that).
+"""Nguồn 'sim' — tạo giá trị giả cho từng kênh gắn vào nguồn này, không cần
+phần cứng. Dùng để dựng thử đường ống edge <-> Odoo (khác với pcm.simulator,
+model đó chạy Ở PHÍA ODOO và không liên quan edge thật).
 
-Odoo khong gui thong so 'kieu dang' cho nguon sim (xem pcm_source._as_config),
-nen o day chi la mot bo tao dang song ngau nhien don gian — du de kiem tra
-toan bo ong dan hello -> config -> measurements -> submit.
+Odoo không gửi thông số 'kiểu dáng' cho nguồn sim (xem pcm_source._as_config),
+nên ở đây chỉ là một bộ tạo dạng sóng ngẫu nhiên đơn giản — đủ để kiểm tra
+toàn bộ ống dẫn hello -> config -> measurements -> submit.
 """
 import asyncio
 import math

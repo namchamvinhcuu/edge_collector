@@ -1,41 +1,41 @@
 # -*- coding: utf-8 -*-
-"""Trang web cau hinh EDGE_* (thay the sua file .env bang tay):
-    GET  /setup   form hien gia tri dang co trong .env (hoac mac dinh neu chua co file)
-    POST /setup   ghi lai .env tai cho (khong tempfile+rename - xem _write_env_file,
-                  giu nguyen dong/comment khac) ROI hot-reload ngay singleton
-                  `settings` + base_url cua OdooClient dang chay (xem
+"""Trang web cấu hình EDGE_* (thay thế sửa file .env bằng tay):
+    GET  /setup   form hiện giá trị đang có trong .env (hoặc mặc định nếu chưa có file)
+    POST /setup   ghi lại .env tại chỗ (không tempfile+rename - xem _write_env_file,
+                  giữ nguyên dòng/comment khác) RỒI hot-reload ngay singleton
+                  `settings` + base_url của OdooClient đang chạy (xem
                   config.reload_settings()/OdooClient.refresh_base_url())
 
-Cung muc do tin cay LAN nhu inbound_api.py - mac dinh nham LAN, nhung co the
-dat sau reverse-proxy/tunnel (vd truy cap qua domain public) NEU cau hinh dung
-EDGE_FORWARDED_ALLOW_IPS (xem duoi). CHI 4 field (EDGE_LISTEN_HOST/PORT,
+Cùng mức độ tin cậy LAN như inbound_api.py - mặc định nhắm LAN, nhưng có thể
+đặt sau reverse-proxy/tunnel (vd truy cập qua domain public) NẾU cấu hình đúng
+EDGE_FORWARDED_ALLOW_IPS (xem dưới). CHỈ 4 field (EDGE_LISTEN_HOST/PORT,
 EDGE_STATE_DIR, EDGE_FORWARDED_ALLOW_IPS - xem config.RESTART_REQUIRED_KEYS)
-van can KHOI DONG LAI edge_collector moi ap dung (socket da bind / SQLite da
-mo co dinh / uvicorn da doc gia tri nay luc startup); 12 field con lai (Main
-URL/Edge code/Name/Platform/Base URL/Setup access token + 6 interval) ap dung
-NGAY sau Save, khong can restart - xem review 2026-09-17 (tinh nang
-hot-reload, phat sinh tu cau hoi thuc te cua Nam).
+vẫn cần KHỞI ĐỘNG LẠI edge_collector mới áp dụng (socket đã bind / SQLite đã
+mở cố định / uvicorn đã đọc giá trị này lúc startup); 12 field còn lại (Main
+URL/Edge code/Name/Platform/Base URL/Setup access token + 6 interval) áp dụng
+NGAY sau Save, không cần restart - xem review 2026-09-17 (tính năng
+hot-reload, phát sinh từ câu hỏi thực tế của Nam).
 
-EDGE_SETUP_TOKEN: rong (mac dinh) = KHONG gate gi (giu nguyen threat-model
-LAN-only cu). Dat 1 gia tri de yeu cau HTTP Basic Auth (username bat ky,
-password = token nay) cho TOAN BO /setup/GET/POST/activity/api_key - xem
-_check_setup_auth(). Sinh ra vi GET /setup/api_key tra RAW credential (Odoo
-api_key) khong auth, va /setup gio co the truy cap qua domain public (xem
-EDGE_FORWARDED_ALLOW_IPS o tren) - anh co URL la lay duoc key, dung de mao
-danh edge nay goi thang Odoo tu bat ky dau. STRONGLY RECOMMENDED dat gia tri
-nay khi /setup duoc tunnel ra ngoai LAN - xem python-reviewer 2026-09-17.
+EDGE_SETUP_TOKEN: rỗng (mặc định) = KHÔNG gate gì (giữ nguyên threat-model
+LAN-only cũ). Đặt 1 giá trị để yêu cầu HTTP Basic Auth (username bất kỳ,
+password = token này) cho TOÀN BỘ /setup/GET/POST/activity/api_key - xem
+_check_setup_auth(). Sinh ra vì GET /setup/api_key trả RAW credential (Odoo
+api_key) không auth, và /setup giờ có thể truy cập qua domain public (xem
+EDGE_FORWARDED_ALLOW_IPS ở trên) - ai có URL là lấy được key, dùng để mạo
+danh edge này gọi thẳng Odoo từ bất kỳ đâu. STRONGLY RECOMMENDED đặt giá trị
+này khi /setup được tunnel ra ngoài LAN - xem python-reviewer 2026-09-17.
 
-EDGE_FORWARDED_ALLOW_IPS: IP/CIDR cua reverse-proxy/tunnel duoc TIN de doc
-X-Forwarded-Proto/-Host, truyen thang cho uvicorn's ProxyHeadersMiddleware.
-Mac dinh "127.0.0.1,::1" (chi trust loopback, dung y het uvicorn) - KHONG
-doi hanh vi LAN-only hien tai. Neu /setup duoc truy cap qua 1 reverse-proxy/
-tunnel TLS-terminating (Origin browser la https:// nhung ket noi TCP toi
-uvicorn van la http://), _is_same_origin() ben duoi se so sai scheme (Origin
-https != request.url.scheme http) va reject nham request Save hop le - da
-gap thuc te 2026-09-17 (Nam tunnel /setup qua domain public). Fix: dat field
-nay dung IP/CIDR cua proxy/tunnel do (KHONG dat "*" tru khi da chan chac
-chan khong ai khac gui thang toi cong nay duoc, vi "*" se trust
-X-Forwarded-Proto tu BAT KY client nao, mo duong gia mao Origin qua header).
+EDGE_FORWARDED_ALLOW_IPS: IP/CIDR của reverse-proxy/tunnel được TIN để đọc
+X-Forwarded-Proto/-Host, truyền thẳng cho uvicorn's ProxyHeadersMiddleware.
+Mặc định "127.0.0.1,::1" (chỉ trust loopback, đúng y hệt uvicorn) - KHÔNG
+đổi hành vi LAN-only hiện tại. Nếu /setup được truy cập qua 1 reverse-proxy/
+tunnel TLS-terminating (Origin browser là https:// nhưng kết nối TCP tới
+uvicorn vẫn là http://), _is_same_origin() bên dưới sẽ so sai scheme (Origin
+https != request.url.scheme http) và reject nhầm request Save hợp lệ - đã
+gặp thực tế 2026-09-17 (Nam tunnel /setup qua domain public). Fix: đặt field
+này đúng IP/CIDR của proxy/tunnel đó (KHÔNG đặt "*" trừ khi đã chắn chắc
+chắn không ai khác gửi thẳng tới cổng này được, vì "*" sẽ trust
+X-Forwarded-Proto từ BẤT KỲ client nào, mở đường giả mạo Origin qua header).
 """
 import base64
 import html
@@ -59,10 +59,10 @@ router = APIRouter()
 
 _ENV_PATH = DOTENV_PATH
 
-# UI-facing strings deu bang tieng Anh theo yeu cau Nam. Moi field: key (khop
-# .env), label, gia tri mac dinh, hint, group ("connection"/"network"/"timing").
-# Field nao can restart moi ap dung -> xem config.RESTART_REQUIRED_KEYS (dinh
-# nghia 1 noi DUY NHAT, tranh 2 cho liet ke lech nhau).
+# UI-facing strings đều bằng tiếng Anh theo yêu cầu Nam. Mỗi field: key (khớp
+# .env), label, giá trị mặc định, hint, group ("connection"/"network"/"timing").
+# Field nào cần restart mới áp dụng -> xem config.RESTART_REQUIRED_KEYS (định
+# nghĩa 1 nơi DUY NHẤT, tránh 2 chỗ liệt kê lệch nhau).
 _GROUPS = [
     ("connection", "Connection",
      "How this edge identifies itself and reaches Odoo Main."),
@@ -287,11 +287,11 @@ button[type=submit]:focus-visible { outline: 2px solid var(--ring); outline-offs
 """
 
 
-# Poll rieng /setup/activity (khong dung WebSocket - project chua co tien le,
-# polling JSON khop pattern san co /api/latest, /api/stats). esc() bat buoc
-# cho MOI truong tu dong node (serial/ch/gia tri chuoi 's') truoc khi noi vao
-# innerHTML - day la du lieu tu thiet bi ngoai (node_agent), khong phai
-# hang-code, phai coi la KHONG dang tin de tranh XSS luu tru qua history.
+# Poll riêng /setup/activity (không dùng WebSocket - project chưa có tiền lệ,
+# polling JSON khớp pattern sẵn có /api/latest, /api/stats). esc() bắt buộc
+# cho MỌI trường từ động node (serial/ch/giá trị chuỗi 's') trước khi nối vào
+# innerHTML - đây là dữ liệu từ thiết bị ngoài (node_agent), không phải
+# hằng-code, phải coi là KHÔNG đáng tin để tránh XSS lưu trữ qua history.
 _ACTIVITY_SCRIPT = """<script>
 (function(){
   var list = document.getElementById('activity-list');
@@ -322,10 +322,10 @@ _ACTIVITY_SCRIPT = """<script>
 })();
 </script>"""
 
-# Panel "PCM requests" - CHIEU NGUOC LAI voi Live activity (Odoo Main goi
-# XUONG edge nay, xem inbound_api.py.recent_requests()/_log_request()).
-# summary da duoc build san o server (_summarize_pcm_request) - JS chi hien
-# thi, khong tu suy doan tung field khac nhau giua cac endpoint.
+# Panel "PCM requests" - CHIỀU NGƯỢC LẠI với Live activity (Odoo Main gọi
+# XUỐNG edge này, xem inbound_api.py.recent_requests()/_log_request()).
+# summary đã được build sẵn ở server (_summarize_pcm_request) - JS chỉ hiển
+# thị, không tự suy đoán từng field khác nhau giữa các endpoint.
 _PCM_REQUESTS_SCRIPT = """<script>
 (function(){
   var list = document.getElementById('pcm-requests-list');
@@ -354,9 +354,9 @@ _PCM_REQUESTS_SCRIPT = """<script>
 })();
 </script>"""
 
-# Nut Copy KHONG bao gio doc gia tri tu DOM/HTML da render (o do chi co ban
-# mask) - luon fetch /setup/api_key rieng luc bam, giu dung nguyen tac "full
-# secret khong nam san trong response ban dau" du van cho phep copy khi can.
+# Nút Copy KHÔNG bao giờ đọc giá trị từ DOM/HTML đã render (ở đó chỉ có bản
+# mask) - luôn fetch /setup/api_key riêng lúc bấm, giữ đúng nguyên tắc "full
+# secret không nằm sẵn trong response ban đầu" dù vẫn cho phép copy khi cần.
 _API_KEY_SCRIPT = """<script>
 (function(){
   var btn = document.getElementById('copy-api-key-btn');
@@ -367,11 +367,11 @@ _API_KEY_SCRIPT = """<script>
     setTimeout(function(){ btn.textContent = orig; }, 1500);
   }
   function fallbackCopy(text){
-    // navigator.clipboard.writeText CHI hoat dong trong secure context
-    // (HTTPS hoac localhost) - edge nay thuong truy cap qua LAN HTTP thuong
-    // (threat-model goc), nen can fallback nay cho truong hop do, khong chi
-    // dua vao Clipboard API hien dai - xem bug bao cao 2026-09-17 (nut Copy
-    // "khong hoat dong" khi truy cap qua http://192.168.x.x thuong).
+    // navigator.clipboard.writeText CHỈ hoạt động trong secure context
+    // (HTTPS hoặc localhost) - edge này thường truy cập qua LAN HTTP thường
+    // (threat-model gốc), nên cần fallback này cho trường hợp đó, không chỉ
+    // dựa vào Clipboard API hiện đại - xem bug báo cáo 2026-09-17 (nút Copy
+    // "không hoạt động" khi truy cập qua http://192.168.x.x thường).
     var ta = document.createElement('textarea');
     ta.value = text;
     ta.style.position = 'fixed';
@@ -406,12 +406,12 @@ def _current_values() -> dict:
 
 
 def _env_fingerprint(path: Path) -> str:
-    """Optimistic-concurrency guard chong mat thay doi khi co 2 nguon ghi
-    .env chong nhau (vd sua truc tiep qua SSH trong luc 1 tab /setup khac
-    van dang mo) - _write_env_file() ghi lai TOAN BO gia tri lay tu form,
-    nen 1 tab cu con mo se am tham GHI DE thay doi tu ben ngoai ngay ca khi
-    Nam chi doi 1 field KHONG lien quan - da tai hien that (EDGE_FORWARDED_
-    ALLOW_IPS bi mat sau khi sua qua SSH roi Save 1 field khac tu tab cu) -
+    """Optimistic-concurrency guard chống mất thay đổi khi có 2 nguồn ghi
+    .env chồng nhau (vd sửa trực tiếp qua SSH trong lúc 1 tab /setup khác
+    vẫn đang mở) - _write_env_file() ghi lại TOÀN BỘ giá trị lấy từ form,
+    nên 1 tab cũ còn mở sẽ âm thầm GHI ĐÈ thay đổi từ bên ngoài ngay cả khi
+    Nam chỉ đổi 1 field KHÔNG liên quan - đã tái hiện thật (EDGE_FORWARDED_
+    ALLOW_IPS bị mất sau khi sửa qua SSH rồi Save 1 field khác từ tab cũ) -
     xem Fix-History 2026-09-25."""
     if not path.exists():
         return "missing"
@@ -419,9 +419,9 @@ def _env_fingerprint(path: Path) -> str:
 
 
 def _format_env_line(key: str, value: str) -> str:
-    """Quote logic khop CHINH XAC python-dotenv set_key(quote_mode='auto')
-    (dotenv/main.py set_key()) - dung lai de KHONG lap lai bug '#'-truncation
-    da sua truoc do (gia tri co khoang trang/'#' phai duoc quote)."""
+    """Quote logic khớp CHÍNH XÁC python-dotenv set_key(quote_mode='auto')
+    (dotenv/main.py set_key()) - dùng lại để KHÔNG lặp lại bug '#'-truncation
+    đã sửa trước đó (giá trị có khoảng trắng/'#' phải được quote)."""
     if value.isalnum():
         value_out = value
     else:
@@ -431,21 +431,21 @@ def _format_env_line(key: str, value: str) -> str:
 
 
 def _write_env_file(path: Path, values: dict) -> None:
-    """Ghi TRUC TIEP vao file dang co (truncate + write, KHONG tempfile+
-    os.replace) - python-dotenv's set_key() dung chien luoc atomic-rewrite
-    (tempfile roi os.replace) se crash 'OSError: [Errno 16] Device or
-    resource busy' khi .env la bind-mount 1 FILE rieng trong Docker (khong
-    the rename() de vao dung inode dang bi mount) - xem review 2026-09-17.
-    Doi lai: mat tinh atomic (crash giua chung co the de file dang do), chap
-    nhan duoc cho 1 form cau hinh it khi luu, doi lai chay duoc ca venv lan
-    Docker khong can doi cau truc bind-mount.
+    """Ghi TRỰC TIẾP vào file đang có (truncate + write, KHÔNG tempfile+
+    os.replace) - python-dotenv's set_key() dùng chiến lược atomic-rewrite
+    (tempfile rồi os.replace) sẽ crash 'OSError: [Errno 16] Device or
+    resource busy' khi .env là bind-mount 1 FILE riêng trong Docker (không
+    thể rename() để vào đúng inode đang bị mount) - xem review 2026-09-17.
+    Đổi lại: mất tính atomic (crash giữa chừng có thể để file dang dở), chấp
+    nhận được cho 1 form cấu hình ít khi lưu, đổi lại chạy được cả venv lẫn
+    Docker không cần đổi cấu trúc bind-mount.
 
-    encoding="utf-8" tuong minh o ca doc lan ghi - _current_values() (qua
-    dotenv_values()) va con `Settings` phia config.py deu gia dinh utf-8; neu
-    de mac dinh se roi ve locale.getpreferredencoding() cua platform (vd
-    ANSI codepage tren Windows - EDGE_PLATFORM=windows la target that duoc
-    khai bao trong _FIELDS), gay lech encoding giua ghi/doc cho gia tri co
-    dau (vd EDGE_NAME tieng Viet) - xem review 2026-09-17."""
+    encoding="utf-8" tường minh ở cả đọc lẫn ghi - _current_values() (qua
+    dotenv_values()) và cả `Settings` phía config.py đều giả định utf-8; nếu
+    để mặc định sẽ rơi về locale.getpreferredencoding() của platform (vd
+    ANSI codepage trên Windows - EDGE_PLATFORM=windows là target thật được
+    khai báo trong _FIELDS), gây lệch encoding giữa ghi/đọc cho giá trị có
+    dấu (vd EDGE_NAME tiếng Việt) - xem review 2026-09-17."""
     remaining = dict(values)
     replaced_keys = set()
     out_lines = []
@@ -456,10 +456,10 @@ def _write_env_file(path: Path, values: dict) -> None:
             if stripped and not stripped.startswith("#") and "=" in stripped:
                 candidate = stripped.split("=", 1)[0].strip()
             if candidate in replaced_keys:
-                # Key TRUNG LAP da co san trong file va DA duoc ghi 1 lan roi -
-                # bo dong nay, khong de 2 gia tri cho cung 1 key ton tai
-                # (dotenv doc lai theo kieu "dong sau de dong truoc", se lam
-                # gia tri vua Save bi vo hieu am tham) - xem review 2026-09-17.
+                # Key TRÙNG LẶP đã có sẵn trong file và ĐÃ được ghi 1 lần rồi -
+                # bỏ dòng này, không để 2 giá trị cho cùng 1 key tồn tại
+                # (dotenv đọc lại theo kiểu "dòng sau đè dòng trước", sẽ làm
+                # giá trị vừa Save bị vô hiệu âm thầm) - xem review 2026-09-17.
                 continue
             if candidate is not None and candidate in remaining:
                 out_lines.append(_format_env_line(candidate, remaining.pop(candidate)))
@@ -483,10 +483,10 @@ def _validate(values: dict) -> Dict[str, List[str]]:
     if not values.get("EDGE_MAIN_URL", "").startswith(("http://", "https://")):
         add("EDGE_MAIN_URL", "Must start with http:// or https://")
     url = values.get("EDGE_MQTT_CONSUMER_URL", "")
-    # CHI 2 scheme nay - mqtt_consumer._split_url() chi biet strip "mqtt://"/
-    # "tcp://" va khong goi tls_set() o dau ca, nen "mqtts://"/"ssl://" se bi
-    # parse SAI (host thanh chuoi "mqtts" thay vi hostname that) ma khong bao
-    # loi gi - xem python-reviewer 2026-09-24 (finding tu vong merge patch).
+    # CHỈ 2 scheme này - mqtt_consumer._split_url() chỉ biết strip "mqtt://"/
+    # "tcp://" và không gọi tls_set() ở đâu cả, nên "mqtts://"/"ssl://" sẽ bị
+    # parse SAI (host thành chuỗi "mqtts" thay vì hostname thật) mà không báo
+    # lỗi gì - xem python-reviewer 2026-09-24 (finding từ vòng merge patch).
     if url and not url.startswith(("mqtt://", "tcp://")):
         add("EDGE_MQTT_CONSUMER_URL", "Must start with mqtt:// or tcp:// (TLS not supported yet)")
     for key in ("EDGE_MQTT_CONSUMER", "EDGE_MQTT_CONSUMER_FORWARD"):
@@ -518,27 +518,27 @@ def _validate(values: dict) -> Dict[str, List[str]]:
         add("EDGE_LISTEN_PORT", "Must be in the range 1-65535")
     fwd_ips = values.get("EDGE_FORWARDED_ALLOW_IPS", "")
     if fwd_ips and fwd_ips != "*":
-        # uvicorn's _TrustedHosts KHONG bao gio crash tren gia tri sai (roi
-        # ve "literal", khong bao gio khop client that - fail-closed an
-        # toan) nen truoc day sai chinh ta o day se IM LANG khong co tac
-        # dung gi, khong ai biet TAI SAO. Validate som de bao loi ngay luc
-        # Save thay vi phai tu suy doan sau khi restart - xem
+        # uvicorn's _TrustedHosts KHÔNG bao giờ crash trên giá trị sai (rơi
+        # về "literal", không bao giờ khớp client thật - fail-closed an
+        # toàn) nên trước đây sai chính tả ở đây sẽ IM LẶNG không có tác
+        # dụng gì, không ai biết TẠI SAO. Validate sớm để báo lỗi ngay lúc
+        # Save thay vì phải tự suy đoán sau khi restart - xem
         # python-reviewer 2026-09-17.
         for part in fwd_ips.split(","):
             part = part.strip()
             if not part:
                 continue
             try:
-                # KHONG truyen strict=False - uvicorn's _TrustedHosts.__init__
-                # (proxy_headers.py) goi ipaddress.ip_network(host) MAC DINH
-                # strict=True. Neu validate o day long hon (strict=False), 1
-                # CIDR co host-bits-set (vd "10.0.0.5/24" thay vi dung
-                # "10.0.0.0/24") se PASS validate nhung uvicorn that lai rot
-                # ve ValueError -> coi la literal -> khong bao gio khop
-                # client that -> Save "thanh cong" nhung proxy KHONG duoc
-                # trust, tai dien chinh trieu chung CSRF false-reject ban dau
-                # ma finding nay sinh ra de chan - xem python-reviewer
-                # 2026-09-17 (vong 2, phat hien bang thuc nghiem).
+                # KHÔNG truyền strict=False - uvicorn's _TrustedHosts.__init__
+                # (proxy_headers.py) gọi ipaddress.ip_network(host) MẶC ĐỊNH
+                # strict=True. Nếu validate ở đây lỏng hơn (strict=False), 1
+                # CIDR có host-bits-set (vd "10.0.0.5/24" thay vì đúng
+                # "10.0.0.0/24") sẽ PASS validate nhưng uvicorn thật lại rớt
+                # về ValueError -> coi là literal -> không bao giờ khớp
+                # client thật -> Save "thành công" nhưng proxy KHÔNG được
+                # trust, tái diễn chính triệu chứng CSRF false-reject ban đầu
+                # mà finding này sinh ra để chặn - xem python-reviewer
+                # 2026-09-17 (vòng 2, phát hiện bằng thực nghiệm).
                 ipaddress.ip_network(part)
             except ValueError:
                 add("EDGE_FORWARDED_ALLOW_IPS",
@@ -657,11 +657,11 @@ def _render(values: dict, errors: "Dict[str, List[str]]" = None, saved: bool = F
 
 
 def _is_same_origin(request: Request) -> bool:
-    """Chan CSRF: form POST tu trang KHAC (kieu simple-request, khong bi CORS
-    chan gui di) van co the doi EDGE_MAIN_URL cua nan nhan neu khong kiem tra
-    nay - xem review 2026-09-17. Trinh duyet cu khong gui Origin/Referer cho
-    POST cung goc -> khong co gi de doi chieu thi cho qua (best-effort, khong
-    phai auth that, dung dung muc voi threat-model LAN hien tai)."""
+    """Chặn CSRF: form POST từ trang KHÁC (kiểu simple-request, không bị CORS
+    chặn gửi đi) vẫn có thể đổi EDGE_MAIN_URL của nạn nhân nếu không kiểm tra
+    này - xem review 2026-09-17. Trình duyệt cũ không gửi Origin/Referer cho
+    POST cùng gốc -> không có gì để đối chiếu thì cho qua (best-effort, không
+    phải auth thật, dùng đúng mức với threat-model LAN hiện tại)."""
     origin = request.headers.get("origin") or request.headers.get("referer")
     if not origin:
         return True
@@ -673,22 +673,22 @@ def _is_same_origin(request: Request) -> bool:
 
 
 def _mask_api_key(key) -> str:
-    """Che tat ca tru 4 ky tu cuoi (do dai co dinh 6 cham, KHONG ti le theo
-    do dai key that - tranh lo luon metadata do dai). Dung cho HIEN THI TREN
-    MAN HINH; gia tri THAT chi duoc tra qua GET /setup/api_key khi bam nut
-    Copy, KHONG bao gio nhung vao HTML ban dau - /setup co the truy cap qua
-    domain public (tunnel, xem review 2026-09-17 vu CSRF), giu nguyen quyet
-    dinh cua Nam: mask tren man hinh dung muc du van cho copy full value khi
-    can dung o noi khac (vd dan vao Postman de debug)."""
+    """Che tất cả trừ 4 ký tự cuối (độ dài cố định 6 chấm, KHÔNG tỉ lệ theo
+    độ dài key thật - tránh lộ luôn metadata độ dài). Dùng cho HIỂN THỊ TRÊN
+    MÀN HÌNH; giá trị THẬT chỉ được trả qua GET /setup/api_key khi bấm nút
+    Copy, KHÔNG bao giờ nhúng vào HTML ban đầu - /setup có thể truy cập qua
+    domain public (tunnel, xem review 2026-09-17 vụ CSRF), giữ nguyên quyết
+    định của Nam: mask trên màn hình đúng mức dù vẫn cho copy full value khi
+    cần dùng ở nơi khác (vd dán vào Postman để debug)."""
     if not key:
         return None
     key = str(key)
     if len(key) <= 8:
-        # Key that qua ngan (kieu do dai bat thuong - key that do Odoo sinh
-        # thuong la UUID/hex dai) - str(key)[-4:] tren chuoi <=4 ky tu se tra
-        # ve NGUYEN VEN ca chuoi, lam "mask" lo 100% key. Coi day la dau hieu
-        # bat thuong, che toan bo thay vi lo not - xem python-reviewer
-        # 2026-09-17 (vong review API key feature).
+        # Key thật quá ngắn (kiểu độ dài bất thường - key thật do Odoo sinh
+        # thường là UUID/hex dài) - str(key)[-4:] trên chuỗi <=4 ký tự sẽ trả
+        # về NGUYÊN VẸN cả chuỗi, làm "mask" lộ 100% key. Coi đây là dấu hiệu
+        # bất thường, che toàn bộ thay vì lộ nốt - xem python-reviewer
+        # 2026-09-17 (vòng review API key feature).
         return "••••••"
     return "••••••" + key[-4:]
 
@@ -723,18 +723,18 @@ def _current_api_key_masked(request: Request) -> str:
 
 
 def _check_setup_auth(request: Request) -> "Response | None":
-    """Gate HTTP Basic Auth cho TOAN BO be mat /setup/* - CHI active khi Nam
-    da dat EDGE_SETUP_TOKEN (mac dinh rong = khong gate, tuong thich nguoc
-    voi deployment cu chua cau hinh, giu dung threat-model LAN-only goc).
+    """Gate HTTP Basic Auth cho TOÀN BỘ bề mặt /setup/* - CHỈ active khi Nam
+    đã đặt EDGE_SETUP_TOKEN (mặc định rỗng = không gate, tương thích ngược
+    với deployment cũ chưa cấu hình, giữ đúng threat-model LAN-only gốc).
 
-    Sinh ra vi GET /setup/api_key tra RAW credential (khong phai du lieu do
-    nhu /setup/activity) - ai co URL (vd qua tunnel cong khai) la lay duoc
-    bang 1 lenh curl, dung de mao danh edge nay goi thang Odoo TU BAT KY DAU,
-    vuot han bien gioi 'LAN trust' cua toan bo /setup. Origin-check
-    (_is_same_origin) KHONG chan duoc vector nay (chu dong cho qua khi
-    THIEU header Origin - dung 1 curl/script thuong khong gui Origin) - xem
-    python-reviewer 2026-09-17. secrets.compare_digest de tranh timing
-    attack do dai token dung."""
+    Sinh ra vì GET /setup/api_key trả RAW credential (không phải dữ liệu đo
+    như /setup/activity) - ai có URL (vd qua tunnel công khai) là lấy được
+    bằng 1 lệnh curl, dùng để mạo danh edge này gọi thẳng Odoo TỪ BẤT KỲ ĐÂU,
+    vượt hẳn biên giới 'LAN trust' của toàn bộ /setup. Origin-check
+    (_is_same_origin) KHÔNG chặn được vector này (chủ động cho qua khi
+    THIẾU header Origin - dùng 1 curl/script thường không gửi Origin) - xem
+    python-reviewer 2026-09-17. secrets.compare_digest để tránh timing
+    attack độ dài token đúng."""
     token = settings.setup_token
     if not token:
         return None
@@ -746,12 +746,12 @@ def _check_setup_auth(request: Request) -> "Response | None":
             _, _, supplied = decoded.partition(":")
         except (ValueError, UnicodeDecodeError):
             supplied = ""
-    # encode() sang bytes TRUOC khi so - secrets.compare_digest(str, str) RAISE
-    # TypeError neu 1 trong 2 chuoi co ky tu non-ASCII (gioi han rieng cua
-    # bien the str-str, KHONG ap dung cho bytes-bytes). Ai do go dai 1 mat
-    # khau chua ky tu non-ASCII (khong can biet token that) se lam route
-    # crash 500 thay vi 401 dung thiet ke - xem python-reviewer 2026-09-17
-    # (vong verify auth gate, bat bang thuc nghiem TestClient that).
+    # encode() sang bytes TRƯỚC khi so - secrets.compare_digest(str, str) RAISE
+    # TypeError nếu 1 trong 2 chuỗi có ký tự non-ASCII (giới hạn riêng của
+    # biến thể str-str, KHÔNG áp dụng cho bytes-bytes). Ai đó gõ đại 1 mật
+    # khẩu chứa ký tự non-ASCII (không cần biết token thật) sẽ làm route
+    # crash 500 thay vì 401 đúng thiết kế - xem python-reviewer 2026-09-17
+    # (vòng verify auth gate, bắt bằng thực nghiệm TestClient thật).
     if supplied and secrets.compare_digest(supplied.encode("utf-8"), token.encode("utf-8")):
         return None
     return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="edge setup"'})
@@ -767,13 +767,13 @@ async def setup_get(request: Request):
 
 @router.get("/setup/api_key")
 async def setup_api_key(request: Request):
-    """Tra RAW api_key that - CHI goi khi Nam bam nut Copy (xem
-    _API_KEY_SCRIPT), khong bao gio tu dong nhung vao HTML/_render(). KHAC
-    /setup/activity ve muc do rui ro (do la du lieu do, day la 1 CREDENTIAL
-    song dung de mao danh edge goi Odoo) - _check_setup_auth() la gate BAT
-    BUOC cho endpoint nay khi EDGE_SETUP_TOKEN da duoc cau hinh, xem
-    python-reviewer 2026-09-17 (khong con chi dua vao "cung threat-model
-    LAN/tunnel" nhu truoc)."""
+    """Trả RAW api_key thật - CHỈ gọi khi Nam bấm nút Copy (xem
+    _API_KEY_SCRIPT), không bao giờ tự động nhúng vào HTML/_render(). KHÁC
+    /setup/activity về mức độ rủi ro (đó là dữ liệu đo, đây là 1 CREDENTIAL
+    sống dùng để mạo danh edge gọi Odoo) - _check_setup_auth() là gate BẮT
+    BUỘC cho endpoint này khi EDGE_SETUP_TOKEN đã được cấu hình, xem
+    python-reviewer 2026-09-17 (không còn chỉ dựa vào "cùng threat-model
+    LAN/tunnel" như trước)."""
     denied = _check_setup_auth(request)
     if denied:
         return denied
@@ -784,11 +784,11 @@ async def setup_api_key(request: Request):
 
 @router.get("/setup/activity")
 async def setup_activity(request: Request):
-    """Nguon du lieu cho panel 'Live activity' - doc lai Store.history (da
-    duoc EdgeAgent._on_value ghi san moi lan node_agent day do len, xem
-    node_api.py/scheduler.py), KHONG mo kenh log rieng. store co the None
-    khi test dung FastAPI() tran (khong qua lifespan that) - tra rong an toan,
-    giong pattern agent=None o setup_post()."""
+    """Nguồn dữ liệu cho panel 'Live activity' - đọc lại Store.history (đã
+    được EdgeAgent._on_value ghi sẵn mỗi lần node_agent đẩy đo lên, xem
+    node_api.py/scheduler.py), KHÔNG mở kênh log riêng. store có thể None
+    khi test dùng FastAPI() trần (không qua lifespan thật) - trả rỗng an toàn,
+    giống pattern agent=None ở setup_post()."""
     denied = _check_setup_auth(request)
     if denied:
         return denied
@@ -814,12 +814,12 @@ _COMMAND_LABELS = {
 
 
 def _summarize_pcm_request(r: dict) -> str:
-    """Tom tat 1 dong ngan gon, de doc cho panel 'PCM requests' - dat ten
-    theo dung label UI Odoo (pcm_base) de Nam thay quen mat, khong phai raw
-    endpoint path. Nguon: hoi session Odoo 2026-09-17 - moi request deu do
-    THAO TAC NGUOI DUNG kich hoat (nut Zero/Tare/Restart, tablet worker,
-    connection test, tag browser, workflow process...), KHONG co cron nao
-    tu poll cac endpoint nay."""
+    """Tóm tắt 1 dòng ngắn gọn, dễ đọc cho panel 'PCM requests' - đặt tên
+    theo đúng label UI Odoo (pcm_base) để Nam thấy quen mắt, không phải raw
+    endpoint path. Nguồn: hỏi session Odoo 2026-09-17 - mọi request đều do
+    THAO TÁC NGƯỜI DÙNG kích hoạt (nút Zero/Tare/Restart, tablet worker,
+    connection test, tag browser, workflow process...), KHÔNG có cron nào
+    tự poll các endpoint này."""
     ep = r.get("endpoint")
     if ep == "/api/command":
         label = _COMMAND_LABELS.get(r.get("cmd"), r.get("cmd") or "?")
@@ -838,11 +838,11 @@ def _summarize_pcm_request(r: dict) -> str:
 
 @router.get("/setup/pcm_requests")
 async def setup_pcm_requests(request: Request):
-    """Nguon du lieu cho panel 'PCM requests' - CHIEU NGUOC LAI voi
-    /setup/activity: day la Odoo Main goi XUONG edge nay (inbound_api.py),
-    khong phai node_agent day len. Doc ring-buffer trong-bo-nho
-    (inbound_api.recent_requests()), khong persist SQLite - mat khi restart
-    la chap nhan duoc (telemetry hien thi, khac history/outbox can durable)."""
+    """Nguồn dữ liệu cho panel 'PCM requests' - CHIỀU NGƯỢC LẠI với
+    /setup/activity: đây là Odoo Main gọi XUỐNG edge này (inbound_api.py),
+    không phải node_agent đẩy lên. Đọc ring-buffer trong-bộ-nhớ
+    (inbound_api.recent_requests()), không persist SQLite - mất khi restart
+    là chấp nhận được (telemetry hiển thị, khác history/outbox cần durable)."""
     denied = _check_setup_auth(request)
     if denied:
         return denied
@@ -875,18 +875,18 @@ async def setup_post(request: Request):
     values = {f["key"]: str(form.get(f["key"], "")).strip() for f in _FIELDS}
     submitted_fingerprint = str(form.get("_env_fingerprint", "")).strip()
     current_fingerprint = _env_fingerprint(_ENV_PATH)
-    # Bo qua guard khi field rong (form cu tu ban image TRUOC khi tinh nang
-    # nay ton tai, khong co hidden field) - best-effort, giong triet ly
-    # "khong co gi de doi chieu thi cho qua" cua _is_same_origin() o tren.
+    # Bỏ qua guard khi field rỗng (form cũ từ bản image TRƯỚC khi tính năng
+    # này tồn tại, không có hidden field) - best-effort, giống triết lý
+    # "không có gì để đối chiếu thì cho qua" của _is_same_origin() ở trên.
     if submitted_fingerprint and submitted_fingerprint != current_fingerprint:
-        # _current_values() (KHONG PHAI `values` vua submit) - trang loi nay
-        # tu render() tinh fingerprint MOI (khop file that tren dia) cho hidden
-        # field, nen NEU van hien thi `values` (du lieu cu bi tu choi) thi bam
-        # Save lai NGAY tren chinh trang loi (khong can reload) se qua duoc
-        # guard va ghi de mat thay doi ben ngoai - tai dien dung bug goc tinh
-        # nang nay sinh ra de chan. Nhat quan voi 2 nhanh loi khac trong ham
-        # nay (CSRF 403, OSError 500) deu da dung _current_values() - xem
-        # python-reviewer 2026-09-25 (finding Critical, verify thuc nghiem).
+        # _current_values() (KHÔNG PHẢI `values` vừa submit) - trang lỗi này
+        # từ render() tính fingerprint MỚI (khớp file thật trên đĩa) cho hidden
+        # field, nên NẾU vẫn hiển thị `values` (dữ liệu cũ bị từ chối) thì bấm
+        # Save lại NGAY trên chính trang lỗi (không cần reload) sẽ qua được
+        # guard và ghi đè mất thay đổi bên ngoài - tái diễn đúng bug gốc tính
+        # năng này sinh ra để chặn. Nhất quán với 2 nhánh lỗi khác trong hàm
+        # này (CSRF 403, OSError 500) đều đã dùng _current_values() - xem
+        # python-reviewer 2026-09-25 (finding Critical, verify thực nghiệm).
         return HTMLResponse(
             _render(_current_values(),
                     errors={"_form": ["Config changed elsewhere since this page was loaded "
@@ -902,21 +902,21 @@ async def setup_post(request: Request):
             _render(values, errors=errors, api_key_masked=_current_api_key_masked(request)),
             status_code=400)
     if not values["EDGE_CODE"]:
-        # De trong = "giu nguyen" (dung UX hint "leave blank to auto-generate
-        # on first run") - PHAI ghi gia tri DANG HIEU LUC THAT (settings.edge_code,
-        # co the da tu sinh tu lan startup truoc) xuong .env, KHONG ghi rong.
-        # Ghi rong se khien restart THAT sau nay (Settings.__init__) tu sinh 1
-        # edge_code MOI khac han code dang chay - edge mat khop voi pcm.edge.code
-        # da dang ky ben Odoo, dut ket noi im lang - xem review 2026-09-17
-        # (tinh nang hot-reload).
+        # Để trống = "giữ nguyên" (đúng UX hint "leave blank to auto-generate
+        # on first run") - PHẢI ghi giá trị ĐANG HIỆU LỰC THẬT (settings.edge_code,
+        # có thể đã tự sinh từ lần startup trước) xuống .env, KHÔNG ghi rỗng.
+        # Ghi rỗng sẽ khiến restart THẬT sau này (Settings.__init__) tự sinh 1
+        # edge_code MỚI khác hẳn code đang chạy - edge mất khớp với pcm.edge.code
+        # đã đăng ký bên Odoo, đứt kết nối im lặng - xem review 2026-09-17
+        # (tính năng hot-reload).
         values["EDGE_CODE"] = settings.edge_code
     try:
         _write_env_file(_ENV_PATH, values)
     except OSError as exc:
-        # Container chay non-root (uid 1000, xem Dockerfile) - .env bind-mount
-        # tu host co the khong writable boi uid do (vd tao boi root/user
-        # khac). Khong bat se rot thanh 500 khong ro nghia; bat lai va tra
-        # loi ro rang HON de Nam biet phai chinh permission host, KHONG phai
+        # Container chạy non-root (uid 1000, xem Dockerfile) - .env bind-mount
+        # từ host có thể không writable bởi uid đó (vd tạo bởi root/user
+        # khác). Không bắt sẽ rớt thành 500 không rõ nghĩa; bắt lại và trả
+        # lỗi rõ ràng HƠN để Nam biết phải chỉnh permission host, KHÔNG phải
         # bug logic - xem docker-reviewer 2026-09-17.
         return HTMLResponse(
             _render(_current_values(),
@@ -927,10 +927,10 @@ async def setup_post(request: Request):
             status_code=500,
         )
     reload_settings(_ENV_PATH)
-    # EdgeAgent/OdooClient chi ton tai khi chay qua app.py that (lifespan da
-    # gan app.state.agent) - test dung FastAPI() tran nen khong co, bo qua an
-    # toan. httpx.AsyncClient bake base_url luc __init__ nen can goi tuong
-    # minh de EDGE_MAIN_URL moi co hieu luc ngay (xem OdooClient.refresh_base_url).
+    # EdgeAgent/OdooClient chỉ tồn tại khi chạy qua app.py thật (lifespan đã
+    # gán app.state.agent) - test dùng FastAPI() trần nên không có, bỏ qua an
+    # toàn. httpx.AsyncClient bake base_url lúc __init__ nên cần gọi tường
+    # minh để EDGE_MAIN_URL mới có hiệu lực ngay (xem OdooClient.refresh_base_url).
     agent = getattr(request.app.state, "agent", None)
     if agent is not None:
         agent.odoo.refresh_base_url()

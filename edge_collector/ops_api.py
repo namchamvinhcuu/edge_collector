@@ -1,20 +1,20 @@
 # -*- coding: utf-8 -*-
-"""Trang van hanh cua edge: trang thai 4 den + nhat ky goi tin MQTT.
+"""Trang vận hành của edge: trạng thái 4 đèn + nhật ký gói tin MQTT.
 
-Vi sao o DAY chu khong o Odoo: trang nay phai xem duoc dung luc Odoo hong.
-No doc thang tu MqttConsumer trong bo nho cua chinh tien trinh nay, khong
-goi Odoo, khong cham SQLite, khong them mot byte nao len duong day. Mot
-trang chan doan ma chet cung voi thu no dang chan doan thi vo dung.
+Vì sao ở ĐÂY chứ không ở Odoo: trang này phải xem được đúng lúc Odoo hỏng.
+Nó đọc thẳng từ MqttConsumer trong bộ nhớ của chính tiến trình này, không
+gọi Odoo, không chạm SQLite, không thêm một byte nào lên đường dây. Một
+trang chẩn đoán mà chết cùng với thứ nó đang chẩn đoán thì vô dụng.
 
-Hai o:
+Hai ô:
 
-    /ops            trang HTML (mot file, khong CDN — nha may co the khong
-                    co Internet, va mot trang chan doan khong duoc phu thuoc
-                    vao mang ben ngoai)
-    /ops/api/state  JSON, trinh duyet hoi moi giay
+    /ops            trang HTML (một file, không CDN — nhà máy có thể không
+                    có Internet, và một trang chẩn đoán không được phụ thuộc
+                    vào mạng bên ngoài)
+    /ops/api/state  JSON, trình duyệt hỏi mỗi giây
 
-Cung cong HTTP Basic voi /setup (EDGE_SETUP_TOKEN). Khac /healthz — cai do
-dang mo cong khai qua domain.
+Cùng cổng HTTP Basic với /setup (EDGE_SETUP_TOKEN). Khác /healthz — cái đó
+đang mở công khai qua domain.
 """
 import time
 

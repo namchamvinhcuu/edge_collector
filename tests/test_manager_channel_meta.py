@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """Test SourceManager.channel_meta_for() / SourceManager.apply_config()
-phan populate `_channel_meta` (29/09 - contract chot voi pcm_base cho tinh
-nang loc-trung-gia-tri o EdgeAgent._should_skip_duplicate(), xem chu thich
-_channel_meta trong manager.py + tests/test_scheduler_dedup.py cho phia
-scheduler dung du lieu nay).
+phần populate `_channel_meta` (29/09 - contract chốt với pcm_base cho tính
+năng lọc-trùng-giá-trị ở EdgeAgent._should_skip_duplicate(), xem chú thích
+_channel_meta trong manager.py + tests/test_scheduler_dedup.py cho phía
+scheduler dùng dữ liệu này).
 
-Dung SourceManager() THAT - __init__ khong co side-effect (khong mo file/
-socket), khac EdgeAgent (xem test_manager_queue_command.py cung dung pattern
-nay)."""
+Dùng SourceManager() THẬT - __init__ không có side-effect (không mở file/
+socket), khác EdgeAgent (xem test_manager_queue_command.py cùng dùng pattern
+này)."""
 import asyncio
 
 import pytest
@@ -20,10 +20,10 @@ def _manager():
 
 
 def test_channel_meta_for_missing_channel_returns_safe_default():
-    """Channel CHUA TUNG duoc apply_config() (vd chua nhan config lan nao,
-    hoac channel moi thay chua co trong lan config gan nhat) -> phai fallback
-    ve gia tri AN TOAN giong het hanh vi TRUOC KHI co tinh nang loc trung:
-    gui MOI lan doc."""
+    """Channel CHƯA TỪNG được apply_config() (vd chưa nhận config lần nào,
+    hoặc channel mới thay chưa có trong lần config gần nhất) -> phải fallback
+    về giá trị AN TOÀN giống hệt hành vi TRƯỚC KHI có tính năng lọc trùng:
+    gửi MỖI lần đọc."""
     manager = _manager()
 
     meta = manager.channel_meta_for("S1", "khong-ton-tai")
@@ -55,9 +55,9 @@ def test_apply_config_populates_channel_meta_from_devices():
 
 
 def test_apply_config_defaults_must_send_every_true_when_field_missing():
-    """Channel KHONG co field "must_send_every" trong payload config (Odoo
-    cu chua nang cap / field optional) -> phai mac dinh True (an toan), khong
-    duoc suy ra False."""
+    """Channel KHÔNG có field "must_send_every" trong payload config (Odoo
+    cũ chưa nâng cấp / field optional) -> phải mặc định True (an toàn), không
+    được suy ra False."""
     manager = _manager()
     cfg = {
         "config_version": 1,
@@ -74,9 +74,9 @@ def test_apply_config_defaults_must_send_every_true_when_field_missing():
 
 
 def test_apply_config_populates_channel_meta_even_without_source():
-    """Channel KHONG co "source" (khong route duoc driver, se KHONG co mat
-    trong channels_by_source/_route) - _channel_meta VAN phai duoc populate
-    cho no (khac _route/channels_by_source - xem chu thich apply_config())."""
+    """Channel KHÔNG có "source" (không route được driver, sẽ KHÔNG có mặt
+    trong channels_by_source/_route) - _channel_meta VẪN phải được populate
+    cho nó (khác _route/channels_by_source - xem chú thích apply_config())."""
     manager = _manager()
     cfg = {
         "config_version": 1,
@@ -89,25 +89,25 @@ def test_apply_config_populates_channel_meta_even_without_source():
 
     asyncio.run(manager.apply_config(cfg))
 
-    # Khong route duoc driver cho channel nay (khong co "source").
+    # Không route được driver cho channel này (không có "source").
     assert manager.driver_for_channel("S1", "no_source_ch") is None
-    # NHUNG channel_meta van co du lieu dung.
+    # NHƯNG channel_meta vẫn có dữ liệu đúng.
     assert manager.channel_meta_for("S1", "no_source_ch") == {
         "max_age_ms": 1000, "must_send_every": False,
     }
 
 
 # ----------------------------------------------------------------------
-# Chuan hoa must_send_every NGAY LUC GHI trong apply_config() (regression
-# cho finding python-reviewer 2026-09-29 - truoc fix, `ch.get("must_send_every",
-# True)` chi ap default khi KEY VANG MAT; key co mat voi value None (vd Odoo
-# serialize JSON null) lot qua thanh None (falsy) - nguy hiem cho channel
-# counter/trigger/raw-forward vi bi hieu nham thanh must_send_every=False).
+# Chuẩn hóa must_send_every NGAY LÚC GHI trong apply_config() (regression
+# cho finding python-reviewer 2026-09-29 - trước fix, `ch.get("must_send_every",
+# True)` chỉ áp default khi KEY VẮNG MẶT; key có mặt với value None (vd Odoo
+# serialize JSON null) lọt qua thành None (falsy) - nguy hiểm cho channel
+# counter/trigger/raw-forward vì bị hiểu nhầm thành must_send_every=False).
 # ----------------------------------------------------------------------
 
 def test_apply_config_normalizes_explicit_null_must_send_every_to_true():
-    """Field co mat trong payload nhung value la None (JSON null) - phai
-    duoc chuan hoa thanh True (an toan), KHONG duoc lot qua thanh None/falsy."""
+    """Field có mặt trong payload nhưng value là None (JSON null) - phải
+    được chuẩn hóa thành True (an toàn), KHÔNG được lọt qua thành None/falsy."""
     manager = _manager()
     cfg = {
         "config_version": 1,
@@ -134,9 +134,9 @@ def test_apply_config_normalizes_explicit_null_must_send_every_to_true():
     ("", False),
 ])
 def test_apply_config_normalizes_must_send_every_to_proper_bool(raw_value, expected):
-    """Moi kieu du lieu Odoo co the gui (bool/int/string) deu phai duoc ep
-    ve dung bool() truoc khi luu - tranh gia tri "truthy la" (vd chuoi rong)
-    gay hieu nham falsy/truthy sai khi doc lai o EdgeAgent._should_skip_duplicate()."""
+    """Mọi kiểu dữ liệu Odoo có thể gửi (bool/int/string) đều phải được ép
+    về đúng bool() trước khi lưu - tránh giá trị "truthy lạ" (vd chuỗi rỗng)
+    gây hiểu nhầm falsy/truthy sai khi đọc lại ở EdgeAgent._should_skip_duplicate()."""
     manager = _manager()
     cfg = {
         "config_version": 1,

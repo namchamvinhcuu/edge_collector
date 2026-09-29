@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Cau hinh tien trinh, doc tu bien moi truong (.env). Khong lien quan Odoo config_rev
-- do la cau hinh KENH/NGUON, tai dong bang odoo_client + manager, khong nam o day.
+"""Cấu hình tiến trình, đọc từ biến môi trường (.env). Không liên quan Odoo config_rev
+- đó là cấu hình KÊNH/NGUỒN, tải động bằng odoo_client + manager, không nằm ở đây.
 """
 import os
 import uuid
@@ -9,12 +9,12 @@ from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
 
-# Duong dan .env CHIA SE voi settings_api.py (trang /setup) - phai cung MOT cach
-# resolve, khong de moi noi tu doan lay path rieng (se lech nhau tuy CWD luc
-# start process, vd systemd WorkingDirectory khac luc chay `python -m edge_collector`).
-# Uu tien tim theo CWD (dung workflow README: chay tu thu muc goc edge_collector/);
-# khong thay thi mac dinh vao dung thu muc goc project (canh package nay), khong
-# bao gio doan theo call-stack (hanh vi ngam cua load_dotenv() khong tham so).
+# Đường dẫn .env CHIA SẺ với settings_api.py (trang /setup) - phải cùng MỘT cách
+# resolve, không để mỗi nơi tự đoán lấy path riêng (sẽ lệch nhau tùy CWD lúc
+# start process, vd systemd WorkingDirectory khác lúc chạy `python -m edge_collector`).
+# Ưu tiên tìm theo CWD (đúng workflow README: chạy từ thư mục gốc edge_collector/);
+# không thấy thì mặc định vào đúng thư mục gốc project (cạnh package này), không
+# bao giờ đoán theo call-stack (hành vi ngầm của load_dotenv() không tham số).
 DOTENV_PATH = Path(find_dotenv(usecwd=True) or (Path(__file__).resolve().parent.parent / ".env"))
 
 load_dotenv(DOTENV_PATH)
@@ -44,27 +44,27 @@ class Settings:
 
     listen_host: str = os.environ.get("EDGE_LISTEN_HOST", "0.0.0.0")
     listen_port: int = _int("EDGE_LISTEN_PORT", 8000)
-    # IP/CIDR cua reverse-proxy/tunnel duoc TIN de doc X-Forwarded-Proto/-Host -
-    # truyen thang cho uvicorn.run(forwarded_allow_ips=...) (xem __main__.py).
-    # Mac dinh giu NGUYEN default cua uvicorn ("127.0.0.1,::1" - chi trust
-    # loopback) de khong doi hanh vi cac deployment LAN-only dang chay; chi
-    # can doi khi dat edge_collector sau 1 reverse-proxy/tunnel TLS-terminating
-    # (vd truy cap /setup qua domain public) - xem review 2026-09-17
+    # IP/CIDR của reverse-proxy/tunnel được TIN để đọc X-Forwarded-Proto/-Host -
+    # truyền thẳng cho uvicorn.run(forwarded_allow_ips=...) (xem __main__.py).
+    # Mặc định giữ NGUYÊN default của uvicorn ("127.0.0.1,::1" - chỉ trust
+    # loopback) để không đổi hành vi các deployment LAN-only đang chạy; chỉ
+    # cần đổi khi đặt edge_collector sau 1 reverse-proxy/tunnel TLS-terminating
+    # (vd truy cập /setup qua domain public) - xem review 2026-09-17
     # (CSRF false-positive qua tunnel, _is_same_origin() settings_api.py).
     forwarded_allow_ips: str = os.environ.get("EDGE_FORWARDED_ALLOW_IPS", "127.0.0.1,::1")
-    # HTTP Basic Auth token cho toan bo /setup/* - rong = khong gate (mac dinh,
-    # tuong thich nguoc). Doc lai moi request (settings_api._check_setup_auth)
-    # nen la field "hot" that su - xem reload() ben duoi. Sinh ra tu finding
-    # cua python-reviewer 2026-09-17: GET /setup/api_key tra RAW credential
-    # (khong phai du lieu do nhu /setup/activity) qua domain co the public.
+    # HTTP Basic Auth token cho toàn bộ /setup/* - rỗng = không gate (mặc định,
+    # tương thích ngược). Đọc lại mỗi request (settings_api._check_setup_auth)
+    # nên là field "hot" thật sự - xem reload() bên dưới. Sinh ra từ finding
+    # của python-reviewer 2026-09-17: GET /setup/api_key trả RAW credential
+    # (không phải dữ liệu đo như /setup/activity) qua domain có thể public.
     setup_token: str = os.environ.get("EDGE_SETUP_TOKEN", "")
 
     state_dir: Path = field(default_factory=lambda: Path(os.environ.get("EDGE_STATE_DIR", "./var")))
 
-    # --- ben DOC cua duong MQTT (mqtt_consumer.py) -----------------------
-    # KHONG hot-reload duoc: paho bind client/phien luc start(), doi cac gia
-    # tri nay sau do khong ai doc lai — nen chung nam trong
-    # RESTART_REQUIRED_KEYS ben duoi va KHONG co trong Settings.reload().
+    # --- bên ĐỌC của đường MQTT (mqtt_consumer.py) -----------------------
+    # KHÔNG hot-reload được: paho bind client/phiên lúc start(), đổi các giá
+    # trị này sau đó không ai đọc lại — nên chúng nằm trong
+    # RESTART_REQUIRED_KEYS bên dưới và KHÔNG có trong Settings.reload().
     mqtt_consumer_enabled: bool = _bool("EDGE_MQTT_CONSUMER", False)
     mqtt_consumer_url: str = os.environ.get("EDGE_MQTT_CONSUMER_URL", "mqtt://127.0.0.1:1883")
     mqtt_consumer_user: str = os.environ.get("EDGE_MQTT_CONSUMER_USER", "")
@@ -72,12 +72,12 @@ class Settings:
     mqtt_consumer_topic: str = os.environ.get("EDGE_MQTT_CONSUMER_TOPIC", "fms/+/meas")
     mqtt_consumer_status_topic: str = os.environ.get(
         "EDGE_MQTT_CONSUMER_STATUS_TOPIC", "fms/+/status")
-    # Phien ben bi can client_id CO DINH va DUY NHAT — xem chu thich dau
-    # mqtt_consumer.py. Lay theo edge_code de hai edge canh nhau khong da
-    # nhau ra khoi broker.
+    # Phiên bền bỉ cần client_id CỐ ĐỊNH và DUY NHẤT — xem chú thích đầu
+    # mqtt_consumer.py. Lấy theo edge_code để hai edge cạnh nhau không đá
+    # nhau ra khỏi broker.
     mqtt_consumer_client_id: str = os.environ.get("EDGE_MQTT_CONSUMER_CLIENT_ID", "")
-    # Mac dinh TAT: o giai doan 2 node gui CUNG mot so do bang ca HTTP lan
-    # MQTT, bat cai nay khi ca hai dang chay se lam Odoo nhan doi moi mau.
+    # Mặc định TẮT: ở giai đoạn 2 node gửi CÙNG một số đo bằng cả HTTP lẫn
+    # MQTT, bật cái này khi cả hai đang chạy sẽ làm Odoo nhận đôi mỗi mẫu.
     mqtt_consumer_forward: bool = _bool("EDGE_MQTT_CONSUMER_FORWARD", False)
 
     hello_interval_s: int = _int("EDGE_HELLO_INTERVAL_S", 30)
@@ -102,33 +102,33 @@ class Settings:
         return self.state_dir / "edge_collector.db"
 
     def reload(self) -> None:
-        """Doc lai os.environ (goi SAU load_dotenv(..., override=True)) va
-        CAP NHAT TAI CHO thuoc tinh cua CHINH object nay - odoo_client.py/
-        scheduler.py da `from .config import settings` giu tham chieu toi
-        object nay, gan `settings = Settings()` moi o day se KHONG duoc cac
-        module do thay, phai sua thuoc tinh in-place.
+        """Đọc lại os.environ (gọi SAU load_dotenv(..., override=True)) và
+        CẬP NHẬT TẠI CHỖ thuộc tính của CHÍNH object này - odoo_client.py/
+        scheduler.py đã `from .config import settings` giữ tham chiếu tới
+        object này, gán `settings = Settings()` mới ở đây sẽ KHÔNG được các
+        module đó thấy, phải sửa thuộc tính in-place.
 
-        CHI reload cac field co hieu luc "hot" that su (da xac nhan doc
-        settings.X tuoi moi lan goi/moi vong lap, khong bi "bake" mot lan):
+        CHỈ reload các field có hiệu lực "hot" thật sự (đã xác nhận đọc
+        settings.X tươi mỗi lần gọi/mỗi vòng lặp, không bị "bake" một lần):
         main_url/edge_code/edge_name/edge_platform/edge_base_url (odoo_client.py
-        _headers()/hello() doc lai moi call) + 6 interval (scheduler.py doc
-        lai moi vong asyncio.sleep) + setup_token (settings_api._check_setup_auth
-        doc lai moi request). KHONG dung cho listen_host/listen_port
-        (uvicorn da bind socket luc khoi dong, doi vao day khong ai doc lai),
-        state_dir (Store da mo SQLite co dinh luc EdgeAgent.__init__), va
-        forwarded_allow_ips (uvicorn.run() da doc gia tri nay 1 lan luc
-        khoi dong de dung ProxyHeadersMiddleware - xem __main__.py) -
-        4 field nay VAN CAN restart, xem review 2026-09-17 (tinh nang
+        _headers()/hello() đọc lại mỗi call) + 6 interval (scheduler.py đọc
+        lại mỗi vòng asyncio.sleep) + setup_token (settings_api._check_setup_auth
+        đọc lại mỗi request). KHÔNG dùng cho listen_host/listen_port
+        (uvicorn đã bind socket lúc khởi động, đổi vào đây không ai đọc lại),
+        state_dir (Store đã mở SQLite cố định lúc EdgeAgent.__init__), và
+        forwarded_allow_ips (uvicorn.run() đã đọc giá trị này 1 lần lúc
+        khởi động để dựng ProxyHeadersMiddleware - xem __main__.py) -
+        4 field này VẪN CẦN restart, xem review 2026-09-17 (tính năng
         hot-reload cho trang /setup).
 
-        AN TOAN voi 7 background task cua EdgeAgent (scheduler.py) dang doc
-        settings.X song song vi: (1) toan bo gan thuoc tinh o day KHONG co
-        `await` nao xen giua - mot khi bat dau chay se chay het trong 1 luot
-        cua event loop (asyncio single-thread, cooperative), khong coroutine
-        nao khac (ke ca _hello_loop) co co hoi xen vao giua chung; (2) chi 1
-        uvicorn worker (xem __main__.py). Neu SAU NAY co code doc settings.X
-        tu THREAD RIENG (vd run_in_executor) hoac bat multi-worker, invariant
-        nay KHONG con dung - phai them lock/dong bo that."""
+        AN TOÀN với 7 background task của EdgeAgent (scheduler.py) đang đọc
+        settings.X song song vì: (1) toàn bộ gán thuộc tính ở đây KHÔNG có
+        `await` nào xen giữa - một khi bắt đầu chạy sẽ chạy hết trong 1 lượt
+        của event loop (asyncio single-thread, cooperative), không coroutine
+        nào khác (kể cả _hello_loop) có cơ hội xen vào giữa chúng; (2) chỉ 1
+        uvicorn worker (xem __main__.py). Nếu SAU NÀY có code đọc settings.X
+        từ THREAD RIÊNG (vd run_in_executor) hoặc bật multi-worker, invariant
+        này KHÔNG còn đúng - phải thêm lock/đồng bộ thật."""
         self.main_url = os.environ.get("EDGE_MAIN_URL", "http://localhost:8069").rstrip("/")
         self.edge_code = os.environ.get("EDGE_CODE") or self.edge_code
         self.edge_name = os.environ.get("EDGE_NAME", "")
@@ -146,8 +146,8 @@ class Settings:
 
 settings = Settings()
 
-# Field .env KHONG the hot-reload (can restart edge_collector) - dung o ca
-# settings_api.py (hien badge/thong bao) lan test, tranh 2 noi liet ke lech
+# Field .env KHÔNG thể hot-reload (cần restart edge_collector) - dùng ở cả
+# settings_api.py (hiện badge/thông báo) lẫn test, tránh 2 nơi liệt kê lệch
 # nhau.
 RESTART_REQUIRED_KEYS = {"EDGE_LISTEN_HOST", "EDGE_LISTEN_PORT", "EDGE_STATE_DIR",
                           "EDGE_FORWARDED_ALLOW_IPS",
@@ -158,16 +158,16 @@ RESTART_REQUIRED_KEYS = {"EDGE_LISTEN_HOST", "EDGE_LISTEN_PORT", "EDGE_STATE_DIR
 
 
 def reload_settings(path: Path = DOTENV_PATH) -> None:
-    """Goi sau khi /setup ghi xong .env - nap lai os.environ TU FILE (override=
-    True, khac voi load_dotenv() luc khoi dong VON khong de ghi de bien da co
-    san) roi cap nhat singleton `settings`. Khong tu dong ap dung cho
+    """Gọi sau khi /setup ghi xong .env - nạp lại os.environ TỪ FILE (override=
+    True, khác với load_dotenv() lúc khởi động VỐN không để ghi đè biến đã có
+    sẵn) rồi cập nhật singleton `settings`. Không tự động áp dụng cho
     RESTART_REQUIRED_KEYS (xem Settings.reload).
 
-    Nhan `path` tuong minh (mac dinh DOTENV_PATH) thay vi hardcode - test dung
-    file .env rieng trong tmp_path (khong phai file that cua project), phai
-    truyen dung path do vao day, neu khong reload se doc NHAM file that tren
-    dia trong luc test (settings_api._ENV_PATH da monkeypatch nhung ham nay
-    truoc day khong nhan path nen van tu doc DOTENV_PATH goc) - xem review
-    2026-09-17 (tinh nang hot-reload)."""
+    Nhận `path` tường minh (mặc định DOTENV_PATH) thay vì hardcode - test dùng
+    file .env riêng trong tmp_path (không phải file thật của project), phải
+    truyền đúng path đó vào đây, nếu không reload sẽ đọc NHẦM file thật trên
+    đĩa trong lúc test (settings_api._ENV_PATH đã monkeypatch nhưng hàm này
+    trước đây không nhận path nên vẫn tự đọc DOTENV_PATH gốc) - xem review
+    2026-09-17 (tính năng hot-reload)."""
     load_dotenv(path, override=True)
     settings.reload()

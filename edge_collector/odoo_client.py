@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Client HTTP goi VAO Odoo — dung 'hop dong' /pcm/api/v1/edge/* mo ta trong
-pcm_base/controllers/ingest.py. Chi mot dia chi tin cay (Main); khong node nao
-noi chuyen thang voi Odoo — nguyen tac 'tang duoi goi tang tren'.
+"""Client HTTP gọi VÀO Odoo — dùng 'hợp đồng' /pcm/api/v1/edge/* mô tả trong
+pcm_base/controllers/ingest.py. Chỉ một địa chỉ tin cậy (Main); không node nào
+nói chuyện thẳng với Odoo — nguyên tắc 'tầng dưới gọi tầng trên'.
 
-Xac thuc: header X-Edge-Code (luon co) + X-API-Key (rong o lan hello dau tien,
-Odoo tra ve mot lan roi phai luu lai — _hello() trong pcm_edge.py).
+Xác thực: header X-Edge-Code (luôn có) + X-API-Key (rỗng ở lần hello đầu tiên,
+Odoo trả về một lần rồi phải lưu lại — _hello() trong pcm_edge.py).
 """
 import logging
 from typing import Any, Optional
@@ -29,11 +29,11 @@ class OdooClient:
         return self.store.kv_get("api_key")
 
     def refresh_base_url(self) -> None:
-        """Goi sau config.reload_settings() (tinh nang hot-reload /setup) -
-        httpx.AsyncClient bake base_url vao luc __init__, KHONG tu dong doi
-        theo settings.main_url thay doi sau do (da verify thuc nghiem:
-        AsyncClient.base_url la property GAN LAI duoc, xem review
-        2026-09-17), nen phai goi ham nay tuong minh moi lan reload."""
+        """Gọi sau config.reload_settings() (tính năng hot-reload /setup) -
+        httpx.AsyncClient bake base_url vào lúc __init__, KHÔNG tự động đổi
+        theo settings.main_url thay đổi sau đó (đã verify thực nghiệm:
+        AsyncClient.base_url là property GÁN LẠI được, xem review
+        2026-09-17), nên phải gọi hàm này tường minh mỗi lần reload."""
         self._client.base_url = settings.main_url
 
     def _headers(self) -> dict:
@@ -69,22 +69,22 @@ class OdooClient:
         except ValueError:
             body = {"raw": r.text[:500]}
         if not isinstance(body, dict):
-            # JSON hop le nhung KHONG phai object (vd Odoo tra ve list/chuoi/so
-            # kem status loi) - body.setdefault(...) duoi day se raise
-            # AttributeError khong bi bat, lan ra tan _sender_loop qua
-            # asyncio.gather() lam chet ca task khong hoi phuc - xem
-            # python-reviewer 2026-09-24 (finding tu vong song song hoa
-            # _sender_loop, phat hien la pre-existing o day).
+            # JSON hợp lệ nhưng KHÔNG phải object (vd Odoo trả về list/chuỗi/số
+            # kèm status lỗi) - body.setdefault(...) dưới đây sẽ raise
+            # AttributeError không bị bắt, lan ra tận _sender_loop qua
+            # asyncio.gather() làm chết cả task không hồi phục - xem
+            # python-reviewer 2026-09-24 (finding tử vong song song hóa
+            # _sender_loop, phát hiện là pre-existing ở đây).
             body = {"raw": body}
         if not r.is_success:
             body.setdefault("ok", False)
             body.setdefault("error", body.get("error") or ("http %s" % r.status_code))
             body["status_code"] = r.status_code
             if r.status_code == 429:
-                # Header header uu tien (dung dinh dang contract da chot voi
-                # pcm_base: delta-seconds, KHONG phai HTTP-date); body["retry_after"]
-                # la phong ho khi client nao do strip header - xem scheduler.py
-                # _drain_serial cho noi dung ap dung.
+                # Header header ưu tiên (dùng định dạng contract đã chốt với
+                # pcm_base: delta-seconds, KHÔNG phải HTTP-date); body["retry_after"]
+                # là phòng hộ khi client nào đó strip header - xem scheduler.py
+                # _drain_serial cho nội dung áp dụng.
                 retry_after = None
                 raw = r.headers.get("Retry-After")
                 if raw is not None:
@@ -100,7 +100,7 @@ class OdooClient:
         return body
 
     # ------------------------------------------------------------------
-    # hello — dang ky/song con cua CHINH edge nay (30s, PCM 04/07)
+    # hello — đăng ký/sống còn của CHÍNH edge này (30s, PCM 04/07)
     # ------------------------------------------------------------------
     async def hello(self, *, lag: int, forward_state: str, mqtt_connected: bool,
                      version: str = "0.1.0") -> dict:
@@ -116,11 +116,11 @@ class OdooClient:
             "config_version": self.store.kv_get("config_rev", 0),
         }
         if not self.api_key:
-            body["api_key"] = None  # lan dau: chua co key, Odoo se cap
+            body["api_key"] = None  # lần đầu: chưa có key, Odoo sẽ cấp
         res = await self._post("/pcm/api/v1/edge/hello", body)
         if res.get("ok") and res.get("api_key"):
             self.store.kv_set("api_key", res["api_key"])
-            _logger.info("da nhan api_key tu Main (lan dau dang ky)")
+            _logger.info("đã nhận api_key từ Main (lần đầu đăng ký)")
         return res
 
     # ------------------------------------------------------------------
@@ -139,9 +139,9 @@ class OdooClient:
         body = {"serial": serial, "items": items, "bid": bid, "seq": seq}
         if device_meta:
             body["device"] = device_meta
-        _logger.info("gui measurements %s bid=%s seq=%s: %s", serial, bid, seq, body)
+        _logger.info("gửi measurements %s bid=%s seq=%s: %s", serial, bid, seq, body)
         res = await self._post("/pcm/api/v1/measurements", body)
-        _logger.info("phan hoi measurements %s: %s", serial, res)
+        _logger.info("phản hồi measurements %s: %s", serial, res)
         return res
 
     async def heartbeat(self, serial: str, meta: dict) -> dict:

@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Test edge_collector/mqtt_consumer.py (MOI, patch MQTT merge tu production
-192.168.5.190) - CHI phan logic thuan/goi lai qua object gia, KHONG dung
-broker MQTT that (khong co broker gia lap san trong project, khac
-drivers/sim.py von co san mot driver 'sim' cho luong Modbus/OPC-UA).
+"""Test edge_collector/mqtt_consumer.py (MỚI, patch MQTT merge từ production
+192.168.5.190) - CHỈ phần logic thuần/gọi lại qua object giả, KHÔNG dùng
+broker MQTT thật (không có broker giả lập sẵn trong project, khác
+drivers/sim.py vốn có sẵn một driver 'sim' cho luồng Modbus/OPC-UA).
 
 Scope: _parse_topic()/_split_url()/_topic_sibling() (+ _cmd_topic/_ack_topic)
-la ham thuan tuy; MqttConsumer._handle() va .publish_command() la method goi
-duoc TRUC TIEP (khong async, khong can vong lap paho that) mien la tu cap
-`self._cli`/`self._connected`/`self.caps`/`self.stats["online"]` truoc -
-day chinh la 2 diem noi voi manager.queue_command() (xem
-tests/test_manager_queue_command.py cho phia SourceManager) va voi
-scheduler.push_node_reading()/manager.node_ack_command() (xem duoi).
+là hàm thuần túy; MqttConsumer._handle() và .publish_command() là method gọi
+được TRỰC TIẾP (không async, không cần vòng lặp paho thật) miễn là tự cấp
+`self._cli`/`self._connected`/`self.caps`/`self.stats["online"]` trước -
+đây chính là 2 điểm nối với manager.queue_command() (xem
+tests/test_manager_queue_command.py cho phía SourceManager) và với
+scheduler.push_node_reading()/manager.node_ack_command() (xem dưới).
 
-start()/stop() (can paho.mqtt.client.Client that ket noi mang that) BI SKIP -
-xem 'Scope da KHONG cover' trong bao cao cuoi."""
+start()/stop() (cần paho.mqtt.client.Client thật kết nối mạng thật) BỊ SKIP -
+xem 'Scope đã KHÔNG cover' trong báo cáo cuối."""
 import json
 
 import pytest
@@ -26,14 +26,14 @@ from edge_collector.mqtt_consumer import (
 )
 
 
-# --- ham thuan tuy -----------------------------------------------------
+# --- hàm thuần túy -----------------------------------------------------
 
 
 @pytest.mark.parametrize("topic,expected", [
     ("fms/68EE8F4F06A8/meas", ("68EE8F4F06A8", "meas")),
     ("fms/NODE-01/status", ("NODE-01", "status")),
     ("fms/NODE-01/cmdack", ("NODE-01", "cmdack")),
-    ("meas", (None, None)),                 # thieu segment - khong the tach serial
+    ("meas", (None, None)),                 # thiếu segment - không thể tách serial
     ("a/b", (None, None)),
     ("", (None, None)),
 ])
@@ -49,9 +49,9 @@ def test_parse_topic_none_input_does_not_crash():
     ("mqtt://192.168.5.190:1883", ("192.168.5.190", 1883)),
     ("tcp://broker.local:8883", ("broker.local", 8883)),
     ("192.168.5.190:1883", ("192.168.5.190", 1883)),
-    ("192.168.5.190", ("192.168.5.190", 1883)),          # khong co port -> mac dinh 1883
-    ("", ("127.0.0.1", 1883)),                           # rong -> mac dinh an toan
-    ("mqtt://broker.local:abc", ("broker.local", 1883)),  # port khong phai so -> fallback
+    ("192.168.5.190", ("192.168.5.190", 1883)),          # không có port -> mặc định 1883
+    ("", ("127.0.0.1", 1883)),                           # rỗng -> mặc định an toàn
+    ("mqtt://broker.local:abc", ("broker.local", 1883)),  # port không phải số -> fallback
 ])
 def test_split_url(url, expected):
     assert _split_url(url) == expected
@@ -66,20 +66,20 @@ def test_topic_sibling_and_derived_topics(monkeypatch):
 
 
 def test_topic_sibling_returns_none_when_pattern_too_short(monkeypatch):
-    """Mau chu de tuy chinh chi co 1 segment - khong du de suy ra chu de anh
-    em (cmd/cmdack), phai tra None an toan thay vi crash/sinh chu de sai."""
+    """Mẫu chủ đề tùy chỉnh chỉ có 1 segment - không đủ để suy ra chủ đề anh
+    em (cmd/cmdack), phải trả None an toàn thay vì crash/sinh chủ đề sai."""
     monkeypatch.setattr(config.settings, "mqtt_consumer_topic", "meas")
 
     assert _topic_sibling("cmd") is None
     assert _cmd_topic("NODE1") is None
-    # _ack_topic() co fallback cung "fms/+/cmdack" khi khong suy ra duoc.
+    # _ack_topic() có fallback cứng "fms/+/cmdack" khi không suy ra được.
     assert _ack_topic() == "fms/+/cmdack"
 
 
 def test_cmd_topic_returns_none_when_serial_contains_wildcard_char():
-    """Serial khong bao gio chua '+'/'#' trong thuc te, nhung ham phai an
-    toan (tra None) neu the - gui lenh xuong mot chu de con la wildcard se
-    lam broker tu choi hoac phat rong khap noi khong ai mong doi."""
+    """Serial không bao giờ chứa '+'/'#' trong thực tế, nhưng hàm phải an
+    toàn (trả None) nếu thế - gửi lệnh xuống một chủ đề còn là wildcard sẽ
+    làm broker từ chối hoặc phát rộng khắp nơi không ai mong đợi."""
     assert _cmd_topic("+") is None
 
 
@@ -99,8 +99,8 @@ class _FakeAgentManager:
         self.acked.append((cmd_id, ok, detail))
 
     def cached_node_api_key(self, serial):
-        """Gia lap Odoo da cap (hoac chua cap, tra None) api_key cho serial -
-        dung cho test xac minh HMAC trong _handle()."""
+        """Giả lập Odoo đã cấp (hoặc chưa cấp, trả None) api_key cho serial -
+        dùng cho test xác minh HMAC trong _handle()."""
         return self._api_key
 
 
@@ -114,9 +114,9 @@ class _FakeAgent:
 
 
 def _signed(api_key, payload):
-    """payload (KHONG co 'sig') -> bytes JSON da gan them 'sig' dung cho
-    dung api_key do - dung de dung test giong nhu node_agent that (mqtt_
-    uplink.py) se lam."""
+    """payload (KHÔNG có 'sig') -> bytes JSON đã gắn thêm 'sig' đúng cho
+    đúng api_key đó - dùng để dựng test giống như node_agent thật (mqtt_
+    uplink.py) sẽ làm."""
     body = dict(payload)
     body["sig"] = _sign(api_key, payload)
     return json.dumps(body).encode()
@@ -141,9 +141,9 @@ def test_handle_non_dict_json_increments_bad_and_does_not_crash(consumer):
 
 
 def test_handle_unparseable_topic_is_ignored_silently(consumer):
-    """Topic khong tach duoc serial (vd < 3 segment) - _handle() phai return
-    som, KHONG dem vao stats['bad'] (day khong phai goi tin hong, la topic
-    khong khop mau minh dang nghe)."""
+    """Topic không tách được serial (vd < 3 segment) - _handle() phải return
+    sớm, KHÔNG đếm vào stats['bad'] (đây không phải gói tin hỏng, là topic
+    không khớp mẫu mình đang nghe)."""
     consumer._handle("unrelated", b"{}")
 
     assert consumer.stats["bad"] == 0
@@ -160,11 +160,11 @@ def test_handle_status_message_marks_online_and_mqtt_capability(consumer):
 
 
 def test_handle_status_offline_does_not_erase_previously_declared_mqtt_capability():
-    """'Bao khai nhan lenh qua MQTT la thuoc tinh cua FIRMWARE, con song hay
-    chet la chuyen khac' (xem docstring _handle()) - node rot mang (offline,
-    khong 'cmd') KHONG duoc xoa self.caps[serial] da True truoc do, neu
-    khong manager se tuong day la firmware cu va xep lenh vao hang doi poll
-    ma khong ai con poll nua."""
+    """'Báo khả năng nhận lệnh qua MQTT là thuộc tính của FIRMWARE, còn sống hay
+    chết là chuyện khác' (xem docstring _handle()) - node rớt mạng (offline,
+    không 'cmd') KHÔNG được xóa self.caps[serial] đã True trước đó, nếu
+    không manager sẽ tưởng đây là firmware cũ và xếp lệnh vào hàng đợi poll
+    mà không ai còn poll nữa."""
     consumer = MqttConsumer(_FakeAgent())
     consumer._handle("fms/NODE1/status", json.dumps({"online": True, "cmd": True}).encode())
     assert consumer.caps["NODE1"] is True
@@ -172,7 +172,7 @@ def test_handle_status_offline_does_not_erase_previously_declared_mqtt_capabilit
     consumer._handle("fms/NODE1/status", json.dumps({"online": False}).encode())
 
     assert consumer.stats["online"]["NODE1"] is False
-    assert consumer.caps["NODE1"] is True   # KHONG bi xoa
+    assert consumer.caps["NODE1"] is True   # KHÔNG bị xóa
 
 
 def test_handle_cmdack_message_forwards_to_manager_node_ack_command(consumer):
@@ -209,13 +209,13 @@ def test_handle_measurement_items_forwards_each_to_push_node_reading(consumer, m
 
 
 def test_handle_measurement_drops_epoch_insane_timestamp(consumer, monkeypatch):
-    """Dau thoi gian truoc EPOCH_SANE_S (dong ho node chua dong bo, vd mat
-    SNTP) phai bi bo (ts_s=None) va dem vao ts_dropped, KHONG duoc chuyen
-    thang vao Odoo thanh nam 1970. ts_dropped tinh TRUOC nhanh gate
-    mqtt_consumer_forward nen phai dung ca khi forward dang tat (mac dinh)."""
+    """Dấu thời gian trước EPOCH_SANE_S (đồng hồ node chưa đồng bộ, vd mất
+    SNTP) phải bị bỏ (ts_s=None) và đếm vào ts_dropped, KHÔNG được chuyển
+    thẳng vào Odoo thành năm 1970. ts_dropped tính TRƯỚC nhánh gate
+    mqtt_consumer_forward nên phải đúng cả khi forward đang tắt (mặc định)."""
     monkeypatch.setattr(config.settings, "mqtt_consumer_forward", True)
     consumer._handle("fms/NODE1/meas", json.dumps({
-        "items": [{"ch": "temp", "v": 1, "ts": 1000}],  # 1000 ms = gan epoch 0
+        "items": [{"ch": "temp", "v": 1, "ts": 1000}],  # 1000 ms = gần epoch 0
     }).encode())
 
     assert consumer.stats["ts_dropped"] == 1
@@ -224,7 +224,7 @@ def test_handle_measurement_drops_epoch_insane_timestamp(consumer, monkeypatch):
 
 
 def test_handle_measurement_drops_epoch_insane_timestamp_even_when_forward_disabled(consumer):
-    assert config.settings.mqtt_consumer_forward is False   # baseline mac dinh, khong monkeypatch
+    assert config.settings.mqtt_consumer_forward is False   # baseline mặc định, không monkeypatch
 
     consumer._handle("fms/NODE1/meas", json.dumps({
         "items": [{"ch": "temp", "v": 1, "ts": 1000}],
@@ -234,9 +234,9 @@ def test_handle_measurement_drops_epoch_insane_timestamp_even_when_forward_disab
 
 
 def test_handle_measurement_does_not_forward_when_consumer_forward_disabled(consumer, monkeypatch):
-    """EDGE_MQTT_CONSUMER_FORWARD=false (mac dinh) - CHI DEM (che do 'bong'),
-    khong duoc goi push_node_reading() (tranh Odoo nhan doi khi node con
-    phat ca HTTP lan MQTT cung luc - xem docstring dau file)."""
+    """EDGE_MQTT_CONSUMER_FORWARD=false (mặc định) - CHỈ ĐẾM (chế độ 'bóng'),
+    không được gọi push_node_reading() (tránh Odoo nhận đôi khi node còn
+    phát cả HTTP lẫn MQTT cùng lúc - xem docstring đầu file)."""
     monkeypatch.setattr(config.settings, "mqtt_consumer_forward", False)
 
     consumer._handle("fms/NODE1/meas", json.dumps({
@@ -244,8 +244,8 @@ def test_handle_measurement_does_not_forward_when_consumer_forward_disabled(cons
     }).encode())
 
     assert consumer._agent.readings == []
-    assert consumer.stats["items"] == 1        # van dem so ban ghi thay duoc
-    assert consumer.stats["forwarded"] == 0     # nhung khong day di dau
+    assert consumer.stats["items"] == 1        # vẫn đếm số bản ghi thấy được
+    assert consumer.stats["forwarded"] == 0     # nhưng không đẩy đi đâu
 
 
 def test_handle_measurement_items_not_a_list_increments_bad(consumer):
@@ -264,18 +264,18 @@ def test_handle_measurement_tracks_relay_channel_as_lamp(consumer):
 
 
 def test_handle_measurement_lamp_state_tracked_even_when_forward_disabled():
-    """Regression: self.lamps[...] (dung cho trang /ops '4 den') PHAI cap
-    nhat doc lap voi EDGE_MQTT_CONSUMER_FORWARD (mac dinh false trong giai
-    doan node con phat ca HTTP lan MQTT - xem settings_api.py hint 'Keep
-    false while a node still sends...') - trang /ops phai xem duoc dung
-    trang thai vat ly ngay ca khi chua bat forward-vao-Odoo (xem docstring
-    dau ops_api.py: 'trang nay phai xem duoc dung luc Odoo hong'). Ban dau
-    (truoc fix) self.lamps[...] nam SAU nhanh 'if not
-    settings.mqtt_consumer_forward: continue' nen /ops se khong bao gio
-    thay den cap nhat trong che do forward=false - da duoc doi vi tri trong
-    mqtt_consumer.py::_handle() de tach khoi gate do."""
+    """Regression: self.lamps[...] (dùng cho trang /ops '4 đèn') PHẢI cập
+    nhật độc lập với EDGE_MQTT_CONSUMER_FORWARD (mặc định false trong giai
+    đoạn node còn phát cả HTTP lẫn MQTT - xem settings_api.py hint 'Keep
+    false while a node still sends...') - trang /ops phải xem được đúng
+    trạng thái vật lý ngay cả khi chưa bật forward-vào-Odoo (xem docstring
+    đầu ops_api.py: 'trang này phải xem được đúng lúc Odoo hỏng'). Ban đầu
+    (trước fix) self.lamps[...] nằm SAU nhánh 'if not
+    settings.mqtt_consumer_forward: continue' nên /ops sẽ không bao giờ
+    thấy đèn cập nhật trong chế độ forward=false - đã được dời vị trí trong
+    mqtt_consumer.py::_handle() để tách khỏi gate đó."""
     consumer = MqttConsumer(_FakeAgent())
-    assert config.settings.mqtt_consumer_forward is False   # baseline mac dinh
+    assert config.settings.mqtt_consumer_forward is False   # baseline mặc định
 
     consumer._handle("fms/NODE1/meas", json.dumps({
         "items": [{"ch": "relay_red", "v": 1}],
@@ -283,10 +283,10 @@ def test_handle_measurement_lamp_state_tracked_even_when_forward_disabled():
 
     assert consumer.stats["items"] == 1
     assert consumer.lamps["relay_red"]["v"] == 1
-    assert consumer.stats["forwarded"] == 0   # forward vao Odoo van tat, dung thiet ke
+    assert consumer.stats["forwarded"] == 0   # forward vào Odoo vẫn tắt, đúng thiết kế
 
 
-# --- HMAC: _canonical()/_sign()/_verify_sig() (ham thuan tuy) ------------
+# --- HMAC: _canonical()/_sign()/_verify_sig() (hàm thuần túy) ------------
 
 
 def test_canonical_sorts_keys_and_strips_whitespace():
@@ -317,9 +317,9 @@ def test_verify_sig_accepts_correctly_signed_payload():
 
 
 def test_verify_sig_is_independent_of_original_dict_key_order():
-    """_canonical() dung sort_keys=True nen thu tu field trong dict GOC
-    (truoc khi ky/xac minh) khong duoc anh huong ket qua - node/edge co the
-    serialize object theo thu tu bat ky, mien noi dung field giong nhau."""
+    """_canonical() dùng sort_keys=True nên thứ tự field trong dict GỐC
+    (trước khi ký/xác minh) không được ảnh hưởng kết quả - node/edge có thể
+    serialize object theo thứ tự bất kỳ, miễn nội dung field giống nhau."""
     payload_signed_as = {"ch": "temp", "v": 1, "ts": 123}
     payload_received_as = {"ts": 123, "v": 1, "ch": "temp"}
     sig = _sign("secret123", payload_signed_as)
@@ -331,7 +331,7 @@ def test_verify_sig_is_independent_of_original_dict_key_order():
 def test_verify_sig_rejects_payload_tampered_after_signing():
     payload = {"ch": "temp", "v": 21.5}
     sig = _sign("secret123", payload)
-    tampered = {"ch": "temp", "v": 999.0, "sig": sig}   # doi 1 field sau khi ky
+    tampered = {"ch": "temp", "v": 999.0, "sig": sig}   # đổi 1 field sau khi ký
 
     assert _verify_sig("secret123", tampered) is False
 
@@ -351,15 +351,15 @@ def test_verify_sig_rejects_non_string_sig():
     assert _verify_sig("secret123", {"ch": "temp", "sig": 12345}) is False
 
 
-# --- MqttConsumer._handle() + xac minh HMAC (tich hop qua object gia) ---
+# --- MqttConsumer._handle() + xác minh HMAC (tích hợp qua object giả) ---
 
 
 def test_handle_measurement_without_sig_is_processed_as_before(monkeypatch):
-    """Tuong thich nguoc: ESP32 firmware cu khong biet ky, khong gui 'sig' -
-    PHAI van xu ly binh thuong du Odoo DA cap api_key cho serial nay (khong
-    ep buoc ky chi vi da co key cache)."""
+    """Tương thích ngược: ESP32 firmware cũ không biết ký, không gửi 'sig' -
+    PHẢI vẫn xử lý bình thường dù Odoo ĐÃ cấp api_key cho serial này (không
+    ép buộc ký chỉ vì đã có key cache)."""
     monkeypatch.setattr(config.settings, "mqtt_consumer_forward", True)
-    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, khong phai credential that
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, không phải credential thật
 
     consumer._handle("fms/NODE1/meas", json.dumps({
         "items": [{"ch": "temp", "v": 21.5}],
@@ -371,7 +371,7 @@ def test_handle_measurement_without_sig_is_processed_as_before(monkeypatch):
 
 def test_handle_measurement_with_valid_sig_is_forwarded(monkeypatch):
     monkeypatch.setattr(config.settings, "mqtt_consumer_forward", True)
-    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, khong phai credential that
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, không phải credential thật
     payload = {"items": [{"ch": "temp", "v": 21.5}]}
 
     consumer._handle("fms/NODE1/meas", _signed("secret123", payload))
@@ -382,10 +382,10 @@ def test_handle_measurement_with_valid_sig_is_forwarded(monkeypatch):
 
 
 def test_handle_measurement_with_invalid_sig_is_rejected_and_not_forwarded(monkeypatch):
-    """Doi 1 gia tri trong payload SAU khi da ky (gia mao) - sig cu khong con
-    khop, phai bi tu choi TRUOC ca touch_node()/push_node_reading()."""
+    """Đổi 1 giá trị trong payload SAU khi đã ký (giả mạo) - sig cũ không còn
+    khớp, phải bị từ chối TRƯỚC cả touch_node()/push_node_reading()."""
     monkeypatch.setattr(config.settings, "mqtt_consumer_forward", True)
-    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, khong phai credential that
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, không phải credential thật
     payload = {"items": [{"ch": "temp", "v": 21.5}]}
     signed = json.loads(_signed("secret123", payload))
     signed["items"][0]["v"] = 999.0
@@ -398,8 +398,8 @@ def test_handle_measurement_with_invalid_sig_is_rejected_and_not_forwarded(monke
 
 
 def test_handle_measurement_with_sig_but_no_cached_api_key_is_rejected(monkeypatch):
-    """Odoo chua cap api_key cho serial nay (cached_node_api_key tra None) -
-    khong the xac minh duoc thi TU CHOI, khong co duong ha tieu chuan."""
+    """Odoo chưa cấp api_key cho serial này (cached_node_api_key trả None) -
+    không thể xác minh được thì TỪ CHỐI, không có đường hạ tiêu chuẩn."""
     monkeypatch.setattr(config.settings, "mqtt_consumer_forward", True)
     consumer = MqttConsumer(_FakeAgent(api_key=None))
     payload = {"items": [{"ch": "temp", "v": 21.5}]}
@@ -411,7 +411,7 @@ def test_handle_measurement_with_sig_but_no_cached_api_key_is_rejected(monkeypat
 
 
 def test_handle_status_with_valid_sig_is_processed_normally():
-    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, khong phai credential that
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, không phải credential thật
     payload = {"online": True, "cmd": True}
 
     consumer._handle("fms/NODE1/status", _signed("secret123", payload))
@@ -422,10 +422,10 @@ def test_handle_status_with_valid_sig_is_processed_normally():
 
 
 def test_handle_status_with_invalid_sig_is_rejected_and_online_not_updated():
-    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, khong phai credential that
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, không phải credential thật
     payload = {"online": True, "cmd": True}
     signed = json.loads(_signed("secret123", payload))
-    signed["online"] = False   # gia mao sau khi ky, sig cu khong con khop
+    signed["online"] = False   # giả mạo sau khi ký, sig cũ không còn khớp
 
     consumer._handle("fms/NODE1/status", json.dumps(signed).encode())
 
@@ -435,11 +435,11 @@ def test_handle_status_with_invalid_sig_is_rejected_and_online_not_updated():
 
 
 def test_handle_status_offline_lwt_without_sig_still_marks_offline():
-    """LWT ({"online": false}) do BROKER tu phat khi mat ket noi voi node -
-    khong the ky dong (khong phai node chu dong gui), nen KHONG co 'sig'.
-    Logic 'sig tuy chon' phai cho qua binh thuong du serial nay DA co
-    api_key cache (khong ep buoc ky cho thong diep broker tu phat)."""
-    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, khong phai credential that
+    """LWT ({"online": false}) do BROKER tự phát khi mất kết nối với node -
+    không thể ký được (không phải node chủ động gửi), nên KHÔNG có 'sig'.
+    Logic 'sig tùy chọn' phải cho qua bình thường dù serial này ĐÃ có
+    api_key cache (không ép buộc ký cho thông điệp broker tự phát)."""
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, không phải credential thật
 
     consumer._handle("fms/NODE1/status", json.dumps({"online": False}).encode())
 
@@ -448,7 +448,7 @@ def test_handle_status_offline_lwt_without_sig_still_marks_offline():
 
 
 def test_handle_cmdack_with_valid_sig_is_acked_normally():
-    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, khong phai credential that
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, không phải credential thật
     payload = {"id": 5, "ok": True}
 
     consumer._handle("fms/NODE1/cmdack", _signed("secret123", payload))
@@ -458,10 +458,10 @@ def test_handle_cmdack_with_valid_sig_is_acked_normally():
 
 
 def test_handle_cmdack_with_invalid_sig_is_rejected_and_not_acked():
-    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, khong phai credential that
+    consumer = MqttConsumer(_FakeAgent(api_key="secret123"))  # secret-allow: test fixture, không phải credential thật
     payload = {"id": 5, "ok": True}
     signed = json.loads(_signed("secret123", payload))
-    signed["ok"] = False   # gia mao ket qua lenh sau khi ky
+    signed["ok"] = False   # giả mạo kết quả lệnh sau khi ký
 
     consumer._handle("fms/NODE1/cmdack", json.dumps(signed).encode())
 
@@ -508,9 +508,9 @@ def test_publish_command_succeeds_and_updates_stats(monkeypatch):
 
     assert ok is True
     assert c.stats["cmd_sent"] == 1
-    # Counter rieng cua nhanh NO_CONN (them 2026-09-24) KHONG duoc tang nham
-    # o case thanh cong thuong nay - xem test_publish_command_returns_true_
-    # and_counts_via_cmd_sent_no_conn_when_broker_rc_is_no_conn ben duoi.
+    # Counter riêng của nhánh NO_CONN (thêm 2026-09-24) KHÔNG được tăng nhầm
+    # ở case thành công thường này - xem test_publish_command_returns_true_
+    # and_counts_via_cmd_sent_no_conn_when_broker_rc_is_no_conn bên dưới.
     assert c.stats.get("cmd_sent_no_conn", 0) == 0
     assert len(c._cli.published) == 1
     topic, payload, qos = c._cli.published[0]
@@ -524,22 +524,22 @@ def test_publish_command_fails_when_no_client_or_not_connected():
     c = _wired_consumer(connected=False)
     assert c.publish_command("NODE1", {"id": 1}) is False
 
-    c2 = MqttConsumer(_FakeAgent())    # _cli ban dau la None (chua start())
+    c2 = MqttConsumer(_FakeAgent())    # _cli ban đầu là None (chưa start())
     assert c2.publish_command("NODE1", {"id": 1}) is False
 
 
 def test_publish_command_fails_when_node_has_not_declared_mqtt_capability(monkeypatch):
     monkeypatch.setattr(config.settings, "mqtt_consumer_topic", "fms/+/meas")
-    c = _wired_consumer(caps={})   # NODE1 chua khai "cmd" qua status
+    c = _wired_consumer(caps={})   # NODE1 chưa khai "cmd" qua status
 
     assert c.publish_command("NODE1", {"id": 1}) is False
     assert c._cli.published == []
 
 
 def test_publish_command_fails_when_node_currently_offline(monkeypatch):
-    """Chu de lenh KHONG retain va node khong dung phien ben - goi cho mot
-    node dang OFFLINE se bi broker vut di ma khong ai bao, nen phai tra
-    False NGAY thay vi 'da gui' roi im lang (xem docstring publish_command())."""
+    """Chủ đề lệnh KHÔNG retain và node không dùng phiên bền - gửi cho một
+    node đang OFFLINE sẽ bị broker vứt đi mà không ai báo, nên phải trả
+    False NGAY thay vì 'đã gửi' rồi im lặng (xem docstring publish_command())."""
     monkeypatch.setattr(config.settings, "mqtt_consumer_topic", "fms/+/meas")
     c = _wired_consumer(online={"NODE1": False})
 
@@ -548,9 +548,9 @@ def test_publish_command_fails_when_node_currently_offline(monkeypatch):
 
 
 def test_publish_command_fails_when_topic_cannot_be_derived(monkeypatch):
-    """Mau chu de cau hinh qua ngan (khong suy ra duoc chu de 'cmd' anh em) -
-    _cmd_topic() tra None, publish_command() phai tra False an toan thay vi
-    crash hoac goi client.publish(None, ...)."""
+    """Mẫu chủ đề cấu hình quá ngắn (không suy ra được chủ đề 'cmd' anh em) -
+    _cmd_topic() trả None, publish_command() phải trả False an toàn thay vì
+    crash hoặc gọi client.publish(None, ...)."""
     monkeypatch.setattr(config.settings, "mqtt_consumer_topic", "meas")
     c = _wired_consumer()
 
@@ -567,12 +567,12 @@ def test_publish_command_returns_false_on_client_exception(monkeypatch):
 
 
 def test_publish_command_returns_false_when_broker_rc_not_success(monkeypatch):
-    """Regression: rc loi THUONG (khac ca SUCCESS lan NO_CONN) van phai tra
-    False - xac nhan rc=1 (MQTT_ERR_NOMEM) o day KHONG PHAI truong hop dac
-    biet NO_CONN=4 (xem test_publish_command_returns_true_and_counts_as_sent_
-    when_broker_rc_is_no_conn ngay duoi, phan biet 2 nhanh)."""
+    """Regression: rc lỗi THƯỜNG (khác cả SUCCESS lẫn NO_CONN) vẫn phải trả
+    False - xác nhận rc=1 (MQTT_ERR_NOMEM) ở đây KHÔNG PHẢI trường hợp đặc
+    biệt NO_CONN=4 (xem test_publish_command_returns_true_and_counts_as_sent_
+    when_broker_rc_is_no_conn ngay dưới, phân biệt 2 nhánh)."""
     monkeypatch.setattr(config.settings, "mqtt_consumer_topic", "fms/+/meas")
-    assert 1 != mqtt_consumer.mqtt.MQTT_ERR_NO_CONN   # xac nhan rc dung o day KHONG phai NO_CONN
+    assert 1 != mqtt_consumer.mqtt.MQTT_ERR_NO_CONN   # xác nhận rc dùng ở đây KHÔNG phải NO_CONN
     c = _wired_consumer(client_rc=1)   # != mqtt_consumer.mqtt.MQTT_ERR_SUCCESS (0)
 
     assert c.publish_command("NODE1", {"id": 1}) is False
@@ -580,9 +580,9 @@ def test_publish_command_returns_false_when_broker_rc_not_success(monkeypatch):
 
 
 def test_publish_command_returns_false_when_broker_rc_is_queue_size_error(monkeypatch):
-    """Regression bo sung: mot rc loi KHAC nua (MQTT_ERR_QUEUE_SIZE=15, khac
-    han rc=1 o test tren) cung phai roi vao nhanh False thuong, KHONG duoc
-    an nham vao nhanh dac biet NO_CONN=4 chi vi "khac SUCCESS"."""
+    """Regression bổ sung: một rc lỗi KHÁC nữa (MQTT_ERR_QUEUE_SIZE=15, khác
+    hẳn rc=1 ở test trên) cũng phải rơi vào nhánh False thường, KHÔNG được
+    ẩn nhầm vào nhánh đặc biệt NO_CONN=4 chỉ vì "khác SUCCESS"."""
     monkeypatch.setattr(config.settings, "mqtt_consumer_topic", "fms/+/meas")
     c = _wired_consumer(client_rc=mqtt_consumer.mqtt.MQTT_ERR_QUEUE_SIZE)
 
@@ -592,20 +592,20 @@ def test_publish_command_returns_false_when_broker_rc_is_queue_size_error(monkey
 
 
 def test_publish_command_returns_true_and_counts_via_cmd_sent_no_conn_when_broker_rc_is_no_conn(monkeypatch):
-    """Case moi (fix-mqtt-no-conn-race): rc == MQTT_ERR_NO_CONN la truong hop
-    DAC BIET cua paho-mqtt - message van duoc GIU trong self._out_messages va
-    TU DONG republish khi reconnect (da doc source paho-mqtt that, xem
+    """Case mới (fix-mqtt-no-conn-race): rc == MQTT_ERR_NO_CONN là trường hợp
+    ĐẶC BIỆT của paho-mqtt - message vẫn được GIỮ trong self._out_messages và
+    TỰ ĐỘNG republish khi reconnect (đã đọc source paho-mqtt thật, xem
     docstring publish_command() trong production code). publish_command()
-    phai tra True (coi nhu da "giao" cho paho tu gui lai, KHONG phai da gui
-    that toi broker) de manager.queue_command() tiep tuc cho ACK that thay vi
-    bao loi chac chan ngay - neu ACK khong toi kip se tu roi vao nhanh
+    phải trả True (coi như đã "giao" cho paho tự gửi lại, KHÔNG phải đã gửi
+    thật tới broker) để manager.queue_command() tiếp tục chờ ACK thật thay vì
+    báo lỗi chắc chắn ngay - nếu ACK không tới kịp sẽ tự rơi vào nhánh
     timeout ("status": "unknown", xem test_manager_queue_command.py::
     test_queue_command_real_timeout_sets_ok_false_and_status_unknown).
 
-    Update 2026-09-24 (Nam yeu cau, finding tach counter tu review truoc):
-    nhanh NO_CONN dem vao counter RIENG "cmd_sent_no_conn", KHONG con gop
-    chung vao "cmd_sent" nua - de /ops phan biet duoc lenh da gui THAT xong
-    (rc=SUCCESS) voi lenh dang cho paho tu gui lai (rc=NO_CONN)."""
+    Update 2026-09-24 (Nam yêu cầu, finding tách counter từ review trước):
+    nhánh NO_CONN đếm vào counter RIÊNG "cmd_sent_no_conn", KHÔNG còn gộp
+    chung vào "cmd_sent" nữa - để /ops phân biệt được lệnh đã gửi THẬT xong
+    (rc=SUCCESS) với lệnh đang chờ paho tự gửi lại (rc=NO_CONN)."""
     monkeypatch.setattr(config.settings, "mqtt_consumer_topic", "fms/+/meas")
     c = _wired_consumer(client_rc=mqtt_consumer.mqtt.MQTT_ERR_NO_CONN)
 
@@ -613,9 +613,9 @@ def test_publish_command_returns_true_and_counts_via_cmd_sent_no_conn_when_broke
 
     assert ok is True
     assert c.stats["cmd_sent_no_conn"] == 1
-    assert c.stats["cmd_sent"] == 0   # KHONG con tang nham counter "da gui that" cu
-    # publish() van duoc GOI (khac voi cac nhanh "fails_when_..." o tren, noi
-    # publish() khong bao gio duoc goi) - chi RESULT cua no la NO_CONN.
+    assert c.stats["cmd_sent"] == 0   # KHÔNG còn tăng nhầm counter "đã gửi thật" cũ
+    # publish() vẫn được GỌI (khác với các nhánh "fails_when_..." ở trên, nơi
+    # publish() không bao giờ được gọi) - chỉ RESULT của nó là NO_CONN.
     assert len(c._cli.published) == 1
     assert len(c.traffic) == 1 and c.traffic[0]["dir"] == "down"
     assert "gui lai" in c.traffic[0]["note"] or "mat ket noi" in c.traffic[0]["note"]

@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Cac duong Odoo -> edge (dong bo, do NGUOI DUNG bam nut tren man hinh):
-    POST /api/command       zero/tare/read/write mot kenh
-    GET  /api/latest        gia tri moi nhat (bo qua, edge_client._latest)
-    POST /api/browse        duyet tag cua mot nguon (OPC UA/Modbus...)
-    POST /api/source/test   thu ket noi mot cau hinh nguon
-    GET  /api/stats         thong ke lich su cuc bo (mau, ty le loi, stale)
+"""Các đường Odoo -> edge (đồng bộ, do NGƯỜI DÙNG bấm nút trên màn hình):
+    POST /api/command       zero/tare/read/write một kênh
+    GET  /api/latest        giá trị mới nhất (bỏ qua, edge_client._latest)
+    POST /api/browse        duyệt tag của một nguồn (OPC UA/Modbus...)
+    POST /api/source/test   thử kết nối một cấu hình nguồn
+    GET  /api/stats         thống kê lịch sử cục bộ (mẫu, tỷ lệ lỗi, stale)
 
-Xac thuc: pcm_base/tools/edge_client.py CHI gui header X-Edge-Code, khong co
-khoa bi mat (thiet ke coi day la 'chi trong LAN', giong edge_compat.py cua
-fms_iot_edge). O day kiem tra header do khop settings.edge_code khi co mat -
-khong chan cung neu thieu (de tuong thich thiet ke goc) nhung se ghi log canh
-bao. HAY tu chan tuong lua/route rieng cho cong nay, dung de tran ra Internet.
+Xác thực: pcm_base/tools/edge_client.py CHỈ gửi header X-Edge-Code, không có
+khóa bí mật (thiết kế coi đây là 'chỉ trong LAN', giống edge_compat.py của
+fms_iot_edge). Ở đây kiểm tra header đó khớp settings.edge_code khi có mặt -
+không chặn cứng nếu thiếu (để tương thích thiết kế gốc) nhưng sẽ ghi log cảnh
+báo. HÃY tự chặn tường lửa/route riêng cho cổng này, đừng để tràn ra Internet.
 """
 import collections
 import logging
@@ -24,12 +24,12 @@ from .config import settings
 _logger = logging.getLogger("edge.inbound_api")
 router = APIRouter()
 
-# Ring-buffer TRONG BO NHO (KHONG persist SQLite) cho panel 'PCM requests' o
-# /setup - hien thi live request tu Odoo Main goi xuong edge nay. Mat khi
-# restart la chap nhan duoc (day la telemetry hien thi, khac history/outbox
-# can durable) - xem settings_api.py::setup_pcm_requests(). An toan voi
-# 1-worker constraint (module-level singleton, khong co await xen giua
-# deque.appendleft nen khong can lock, giong _pending trong scheduler.py).
+# Ring-buffer TRONG BỘ NHỚ (KHÔNG persist SQLite) cho panel 'PCM requests' ở
+# /setup - hiển thị live request từ Odoo Main gọi xuống edge này. Mất khi
+# restart là chấp nhận được (đây là telemetry hiển thị, khác history/outbox
+# cần durable) - xem settings_api.py::setup_pcm_requests(). An toàn với
+# 1-worker constraint (module-level singleton, không có await xen giữa
+# deque.appendleft nên không cần lock, giống _pending trong scheduler.py).
 _RECENT_MAXLEN = 50
 _recent_requests = collections.deque(maxlen=_RECENT_MAXLEN)
 
@@ -39,13 +39,13 @@ def _log_request(endpoint: str, **fields) -> None:
 
 
 def recent_requests() -> list:
-    """Doc cho panel 'PCM requests' o /setup - xem settings_api.py."""
+    """Đọc cho panel 'PCM requests' ở /setup - xem settings_api.py."""
     return list(_recent_requests)
 
 
 def _check_edge_code(x_edge_code: Optional[str]):
     if x_edge_code and x_edge_code != settings.edge_code:
-        _logger.warning("X-Edge-Code khong khop (%s) - kiem tra tuong lua cho cong nay", x_edge_code)
+        _logger.warning("X-Edge-Code không khớp (%s) - kiểm tra tường lửa cho cổng này", x_edge_code)
 
 
 @router.post("/api/command")
@@ -54,15 +54,15 @@ async def api_command(request: Request, x_edge_code: Optional[str] = Header(defa
     body = await request.json()
     serial, ch, cmd = body.get("serial"), body.get("channel"), body.get("cmd") or "read"
     value = body.get("value")
-    # Tham so phu cho cac kieu phat cua den: {"ms": 10000} = sang 10 giay roi
-    # tu tat, {"cmd":"blink","period_ms":500,"ms":30000} = chop 30 giay.
+    # Tham số phụ cho các kiểu phát của đèn: {"ms": 10000} = sáng 10 giây rồi
+    # tự tắt, {"cmd":"blink","period_ms":500,"ms":30000} = chớp 30 giây.
     #
-    # Chi chuyen tiep nhung khoa DA BIET, khong bung nguyen body xuong node:
-    # firmware phan tich goi nay bang mot bo dem 192 byte, nen mot body thua
-    # truong se bi cat mat va lenh im lang khong chay.
-    # type() thay isinstance(): bool la subclass cua int trong Python, {"ms": true}
-    # tu Odoo se lot qua isinstance(x, (int, float)) va merge xuong firmware duoi
-    # dang JSON "true" - firmware doi so nguyen cho "ms", hong lang le.
+    # Chỉ chuyển tiếp những khóa ĐÃ BIẾT, không bung nguyên body xuống node:
+    # firmware phân tích gói này bằng một bộ đệm 192 byte, nên một body thừa
+    # trường sẽ bị cắt mất và lệnh im lặng không chạy.
+    # type() thay isinstance(): bool là subclass của int trong Python, {"ms": true}
+    # từ Odoo sẽ lọt qua isinstance(x, (int, float)) và merge xuống firmware dưới
+    # dạng JSON "true" - firmware đợi số nguyên cho "ms", hỏng lặng lẽ.
     extra = {k: body[k] for k in ("ms", "period_ms") if type(body.get(k)) in (int, float)}
     _log_request("/api/command", serial=serial, ch=ch, cmd=cmd)
     manager = request.app.state.manager
@@ -70,11 +70,11 @@ async def api_command(request: Request, x_edge_code: Optional[str] = Header(defa
     if driver:
         return await driver.command(ch, cmd, value)
     if serial in manager.known_node_serials():
-        # Node khong bi goi nguoc duoc: hoac day xuong qua MQTT, hoac xep
-        # hang cho firmware cu tu poll — manager tu chon, xem queue_command().
+        # Node không bị gọi ngược được: hoặc đẩy xuống qua MQTT, hoặc xếp
+        # hàng cho firmware cũ tự poll — manager tự chọn, xem queue_command().
         return await manager.queue_command(serial, ch, cmd, value, extra=extra)
     return {"ok": False,
-            "error": "khong tim thay kenh %s cua %s dang chay tren edge nay" % (ch, serial)}
+            "error": "không tìm thấy kênh %s của %s đang chạy trên edge này" % (ch, serial)}
 
 
 @router.get("/api/latest")

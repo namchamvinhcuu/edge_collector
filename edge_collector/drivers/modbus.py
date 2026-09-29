@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Nguon modbus_tcp / modbus_rtu — doc theo 'points' trong pcm_source._as_config().
+"""Nguồn modbus_tcp / modbus_rtu — đọc theo 'points' trong pcm_source._as_config().
 
-Dia chi thanh ghi dung ky hieu Modicon quen thuoc (SAMPLE_TAGS trong api_iot.py):
-    HR40001.. -> Holding Register (func 03), dia chi 0-based = so - 40001
-    IR30001.. -> Input Register   (func 04), dia chi 0-based = so - 30001
-    so nguyen tran -> Holding Register, dia chi = chinh so do
+Địa chỉ thanh ghi dùng ký hiệu Modicon quen thuộc (SAMPLE_TAGS trong api_iot.py):
+    HR40001.. -> Holding Register (func 03), địa chỉ 0-based = số - 40001
+    IR30001.. -> Input Register   (func 04), địa chỉ 0-based = số - 30001
+    số nguyên trần -> Holding Register, địa chỉ = chính số đó
 
-Mot nguon = mot slave (pcm.source.unit_id) — nhieu slave tren cung bus RTU thi
-khai bao nhieu pcm.source, moi cai mot endpoint/serial port rieng.
+Một nguồn = một slave (pcm.source.unit_id) — nhiều slave trên cùng bus RTU thì
+khai báo nhiều pcm.source, mỗi cái một endpoint/serial port riêng.
 """
 import asyncio
 import logging
@@ -56,11 +56,11 @@ def _encode_32(dtype: str, value: float):
     if dtype == "f32":
         raw = struct.pack(">f", float(value))
     elif dtype == "i32":
-        # round(), KHONG int() - int() cat cut ve 0 (truncate), sai so dau
-        # phay dong cua "(value - offset) / scale" o command() co the ra
-        # 2.9999999999999996 thay vi 3.0 -> int() ghi nham 2 xuong thiet bi
-        # that (bien tan/PLC), khong co exception/log nao bao - xem
-        # Fix-History 2026-09-25 (phat hien qua node_agent copy code nay).
+        # round(), KHÔNG int() - int() cắt cụt về 0 (truncate), sai số dấu
+        # phẩy động của "(value - offset) / scale" ở command() có thể ra
+        # 2.9999999999999996 thay vì 3.0 -> int() ghi nhầm 2 xuống thiết bị
+        # thật (biến tần/PLC), không có exception/log nào báo - xem
+        # Fix-History 2026-09-25 (phát hiện qua node_agent copy code này).
         raw = struct.pack(">i", round(value))
     else:
         raw = struct.pack(">I", round(value) & 0xFFFFFFFF)
@@ -84,26 +84,26 @@ class ModbusDriver(SourceDriver):
             from pymodbus.client import AsyncModbusTcpClient
             host, _, port = (self.cfg.get("endpoint") or "").partition(":")
             host, port = host or "127.0.0.1", int(port or 502)
-            _logger.info("%s: ket noi modbus_tcp %s:%s (unit=%s)", self.code, host, port, self._unit)
+            _logger.info("%s: kết nối modbus_tcp %s:%s (unit=%s)", self.code, host, port, self._unit)
             self._client = AsyncModbusTcpClient(host, port=port)
         else:
             from pymodbus.client import AsyncModbusSerialClient
             endpoint, baud = self.cfg.get("endpoint") or "/dev/ttyUSB0", self.cfg.get("baud") or 9600
-            _logger.info("%s: ket noi modbus_rtu %s @%s baud (unit=%s)",
+            _logger.info("%s: kết nối modbus_rtu %s @%s baud (unit=%s)",
                          self.code, endpoint, baud, self._unit)
             self._client = AsyncModbusSerialClient(endpoint, baudrate=baud)
         await self._client.connect()
         if not self._client.connected:
-            _logger.warning("%s: khong ket noi duoc %s", self.code, self.cfg.get("endpoint"))
-            raise ConnectionError("khong ket noi duoc %s" % self.cfg.get("endpoint"))
-        _logger.info("%s: da ket noi", self.code)
+            _logger.warning("%s: không kết nối được %s", self.code, self.cfg.get("endpoint"))
+            raise ConnectionError("không kết nối được %s" % self.cfg.get("endpoint"))
+        _logger.info("%s: đã kết nối", self.code)
 
     async def start(self) -> None:
         self._stop.clear()
         await self._connect()
         self._mark_online()
         points = self.cfg.get("points") or []
-        _logger.info("%s: bat dau doc %d diem, moi %dms — %s", self.code, len(points),
+        _logger.info("%s: bắt đầu đọc %d điểm, mỗi %dms — %s", self.code, len(points),
                      self.cfg.get("poll_ms") or 1000,
                      ", ".join("%s@%s(%s)" % (p.get("ch"), p.get("reg"), p.get("dtype")) for p in points))
         self._task = asyncio.create_task(self._loop())
@@ -120,7 +120,7 @@ class ModbusDriver(SourceDriver):
         if self._client:
             self._client.close()
             self._client = None
-        _logger.info("%s: da dung", self.code)
+        _logger.info("%s: đã dừng", self.code)
 
     async def _read_point(self, point: dict):
         func, addr = _parse_reg(point.get("reg"))
@@ -147,41 +147,41 @@ class ModbusDriver(SourceDriver):
                         v = await self._read_point(point)
                         self._mark_online()
                         if self._last_err.pop(ch, None) is not None:
-                            _logger.info("%s.%s: doc lai duoc, v=%s", self.code, ch, v)
+                            _logger.info("%s.%s: đọc lại được, v=%s", self.code, ch, v)
                         else:
                             _logger.debug("%s.%s: v=%s", self.code, ch, v)
                         self._emit(ch, v=round(v, 6), q=0, stable=True)
                     except Exception as exc:                          # noqa: BLE001
                         msg = str(exc)[:200]
                         if self._last_err.get(ch) != msg:
-                            _logger.warning("%s.%s (reg=%s dtype=%s unit=%s): loi doc modbus: %s",
+                            _logger.warning("%s.%s (reg=%s dtype=%s unit=%s): lỗi đọc modbus: %s",
                                             self.code, ch, point.get("reg"), point.get("dtype"),
                                             self._unit, msg)
                             self._last_err[ch] = msg
                         self._mark_error(msg)
                         self._emit(ch, q=2)
                 if tick == 1:
-                    _logger.info("%s: da chay vong doc dau tien (%d diem)", self.code,
+                    _logger.info("%s: đã chạy vòng đọc đầu tiên (%d điểm)", self.code,
                                  len(self.cfg.get("points") or []))
                 await asyncio.sleep(max(0.2, poll_ms / 1000.0))
         except asyncio.CancelledError:
             raise
         except Exception:                                              # noqa: BLE001
-            _logger.exception("%s: vong doc CRASH — dung han, khong doc nua tu day", self.code)
-            self._mark_error("vong doc crash — xem log")
+            _logger.exception("%s: vòng đọc CRASH — dừng hẳn, không đọc nữa từ đây", self.code)
+            self._mark_error("vòng đọc crash — xem log")
 
     async def command(self, channel_code: str, cmd: str, value=None) -> dict:
         point = next((p for p in self.cfg.get("points") or [] if p.get("ch") == channel_code), None)
         if not point:
-            return {"ok": False, "error": "khong tim thay kenh %s tren nguon nay" % channel_code}
+            return {"ok": False, "error": "không tìm thấy kênh %s trên nguồn này" % channel_code}
         if cmd != "write" or value is None:
-            return {"ok": False, "error": "modbus chi ho tro cmd=write kem value"}
+            return {"ok": False, "error": "modbus chỉ hỗ trợ cmd=write kèm value"}
         func, addr = _parse_reg(point.get("reg"))
         raw = (float(value) - (point.get("offset") or 0)) / (point.get("scale") or 1)
         try:
             dtype = (point.get("dtype") or "u16").lower()
             if dtype in ("i16", "u16"):
-                # round(), KHONG int() - cung ly do voi _encode_32() o tren.
+                # round(), KHÔNG int() - cùng lý do với _encode_32() ở trên.
                 await self._client.write_register(addr, round(raw) & 0xFFFF, device_id=self._unit)
             else:
                 await self._client.write_registers(addr, _encode_32(dtype, raw), device_id=self._unit)
@@ -189,7 +189,7 @@ class ModbusDriver(SourceDriver):
                         point.get("reg"), value, raw)
             return {"ok": True, "status": "ok"}
         except Exception as exc:                                  # noqa: BLE001
-            _logger.warning("%s.%s: loi ghi modbus: %s", self.code, channel_code, exc)
+            _logger.warning("%s.%s: lỗi ghi modbus: %s", self.code, channel_code, exc)
             return {"ok": False, "error": str(exc)[:200]}
 
     async def browse(self, node_id=None, path=None) -> dict:

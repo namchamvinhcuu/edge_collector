@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Nguon OPC UA (PLC) — dang ky thay doi (subscribe) theo danh sach
-pcm_source._as_config()['subscribe'] va ghi lenh theo ['write'].
+"""Nguồn OPC UA (PLC) — đăng ký thay đổi (subscribe) theo danh sách
+pcm_source._as_config()['subscribe'] và ghi lệnh theo ['write'].
 
-GIOI HAN: pcm.source.cert_id (chung chi) khong duoc dua vao _as_config(), nen
-security_mode='sign'/'sign_encrypt' o day chi log canh bao roi thu ket noi
-Anonymous/Basic256Sha256 khong chung chi — can bo sung API tra chung chi ve
-edge (them endpoint /pcm/api/v1/edge/config, hoac upload truc tiep) truoc khi
-dung "Sign & Encrypt" that trong san xuat.
+GIỚI HẠN: pcm.source.cert_id (chứng chỉ) không được đưa vào _as_config(), nên
+security_mode='sign'/'sign_encrypt' ở đây chỉ log cảnh báo rồi thử kết nối
+Anonymous/Basic256Sha256 không chứng chỉ — cần bổ sung API trả chứng chỉ về
+edge (thêm endpoint /pcm/api/v1/edge/config, hoặc upload trực tiếp) trước khi
+dùng "Sign & Encrypt" thật trong sản xuất.
 """
 import asyncio
 import logging
@@ -25,7 +25,7 @@ class OpcuaDriver(SourceDriver):
         self._sub = None
         self._handles = []
         self._node_to_ch = {}
-        self._write_nodes = {}       # ch -> ua Node, cho lenh command
+        self._write_nodes = {}       # ch -> ua Node, cho lệnh command
 
     async def start(self) -> None:
         from asyncua import Client
@@ -36,8 +36,8 @@ class OpcuaDriver(SourceDriver):
             self._client.set_password(auth.get("password") or "")
         if (self.cfg.get("security") or "none") != "none":
             _logger.warning(
-                "nguon %s: security_mode=%s nhung khong co chung chi trong config "
-                "- dang thu ket noi khong ma hoa day du", self.code, self.cfg.get("security"))
+                "nguồn %s: security_mode=%s nhưng không có chứng chỉ trong config "
+                "- đang thử kết nối không mã hóa đầy đủ", self.code, self.cfg.get("security"))
         await self._client.connect()
         self._mark_online()
 
@@ -50,12 +50,12 @@ class OpcuaDriver(SourceDriver):
                 self._handles.append(handle)
                 self._node_to_ch[node.nodeid.to_string()] = row
             except Exception as exc:                               # noqa: BLE001
-                _logger.warning("khong subscribe duoc %s: %s", row.get("node"), exc)
+                _logger.warning("không subscribe được %s: %s", row.get("node"), exc)
         for row in self.cfg.get("write") or []:
             try:
                 self._write_nodes[row["ch"]] = self._client.get_node(row["node"])
             except Exception as exc:                                # noqa: BLE001
-                _logger.warning("khong resolve duoc write-node %s: %s", row.get("node"), exc)
+                _logger.warning("không resolve được write-node %s: %s", row.get("node"), exc)
 
     async def stop(self) -> None:
         if self._sub:
@@ -86,7 +86,7 @@ class OpcuaDriver(SourceDriver):
     async def command(self, channel_code: str, cmd: str, value=None) -> dict:
         node = self._write_nodes.get(channel_code)
         if not node:
-            return {"ok": False, "error": "khong co write-node cho kenh %s" % channel_code}
+            return {"ok": False, "error": "không có write-node cho kênh %s" % channel_code}
         try:
             from asyncua import ua
             variant = ua.Variant(value, ua.VariantType.Double if isinstance(value, float)

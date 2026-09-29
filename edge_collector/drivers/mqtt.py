@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Nguon MQTT — broker mo (pcm_source.py: 'mqtt_in 이 학습한 토픽/키', nghia la
-kenh KHONG khai bao truoc tung topic; edge tu suy ma kenh tu ten topic va de
-Odoo tu tao channel inactive (Channel._upsert ben pcm_channel.py xu ly).
+"""Nguồn MQTT — broker mở (pcm_source.py: 'mqtt_in 이 학습한 토픽/키', nghĩa là
+kênh KHÔNG khai báo trước từng topic; edge tự suy mã kênh từ tên topic và để
+Odoo tự tạo channel inactive (Channel._upsert bên pcm_channel.py xử lý).
 
-Neu payload JSON co san khoa 'ch' thi dung thang (khop voi kenh da khai bao
-source_tag = topic day du). paho-mqtt chay callback tren thread rieng nen moi
-notification duoc chuyen vao vong lap asyncio bang call_soon_threadsafe.
+Nếu payload JSON có sẵn khóa 'ch' thì dùng thẳng (khớp với kênh đã khai báo
+source_tag = topic đầy đủ). paho-mqtt chạy callback trên thread riêng nên mọi
+notification được chuyển vào vòng lặp asyncio bằng call_soon_threadsafe.
 """
 import asyncio
 import json
@@ -81,7 +81,7 @@ class MqttDriver(SourceDriver):
 
     async def command(self, channel_code: str, cmd: str, value=None) -> dict:
         if not self._cli:
-            return {"ok": False, "error": "mqtt chua ket noi"}
+            return {"ok": False, "error": "mqtt chưa kết nối"}
         base = self.cfg.get("topic_base") or "factory"
         payload = value if value is not None else cmd
         self._cli.publish("%s/cmd/%s" % (base, channel_code), str(payload))

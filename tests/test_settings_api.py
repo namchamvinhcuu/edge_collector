@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Test trang cau hinh /setup (settings_api.py) - khong dung lifespan/EdgeAgent
-that de tranh goi mang, chi test router doc lap voi mot FastAPI app rong."""
+"""Test trang cấu hình /setup (settings_api.py) - không dùng lifespan/EdgeAgent
+thật để tránh gọi mạng, chỉ test router độc lập với một FastAPI app rỗng."""
 import base64
 import html
 import re
@@ -23,21 +23,21 @@ def client(tmp_path, monkeypatch):
 
 
 def _extract_fingerprint(html_text):
-    """Lay gia tri hidden input _env_fingerprint tu HTML tra ve boi GET /setup
-    (xem _render()) - dung de mo phong 1 tab trinh duyet dang giu form."""
+    """Lấy giá trị hidden input _env_fingerprint từ HTML trả về bởi GET /setup
+    (xem _render()) - dùng để mô phỏng 1 tab trình duyệt đang giữ form."""
     m = re.search(r'name="_env_fingerprint" value="([^"]*)"', html_text)
     assert m is not None, "khong tim thay hidden input _env_fingerprint trong HTML"
     return m.group(1)
 
 
 def _extract_rendered_form_values(html_text):
-    """Doc lai gia tri DANG HIEN THI tren 1 trang HTML da render boi _render()
-    cho tung field trong _FIELDS - mo phong DUNG nhung gi 1 trinh duyet that
-    se GUI LEN neu bam Save ma KHONG sua field nao, bat ke trang do dang hien
-    thi `values` (data POST cu, truoc fix) hay `_current_values()` (file that
-    tren dia, sau fix). KHONG hardcode _current_values() trong test - lam vay
-    se khong phan biet duoc buggy/fixed vi ca 2 deu tinh fingerprint MOI giong
-    het nhau, chi khac o VALUE hien thi cho tung field."""
+    """Đọc lại giá trị ĐANG HIỂN THỊ trên 1 trang HTML đã render bởi _render()
+    cho từng field trong _FIELDS - mô phỏng ĐÚNG những gì 1 trình duyệt thật
+    sẽ GỬI LÊN nếu bấm Save mà KHÔNG sửa field nào, bất kể trang đó đang hiển
+    thị `values` (data POST cũ, trước fix) hay `_current_values()` (file thật
+    trên đĩa, sau fix). KHÔNG hardcode _current_values() trong test - làm vậy
+    sẽ không phân biệt được buggy/fixed vì cả 2 đều tính fingerprint MỚI giống
+    hệt nhau, chỉ khác ở VALUE hiển thị cho từng field."""
     result = {}
     for f in settings_api._FIELDS:
         key = f["key"]
@@ -91,10 +91,10 @@ def test_post_setup_saves_and_persists_to_env_file(client, tmp_path):
 
 
 def test_write_env_file_drops_stale_duplicate_key(tmp_path):
-    """Neu .env san co key TRUNG LAP (vd sua tay/loi tu truoc), dotenv doc lai
-    theo kieu 'dong sau de dong truoc' - chi thay dong DAU khop se de gia
-    tri MOI bi vo hieu am tham boi dong CU con sot lai phia duoi. Xem review
-    2026-09-17 (repro that boi security-reviewer)."""
+    """Nếu .env sẵn có key TRÙNG LẶP (vd sửa tay/lỗi từ trước), dotenv đọc lại
+    theo kiểu 'dòng sau đè dòng trước' - chỉ thay dòng ĐẦU khớp sẽ để giá
+    trị MỚI bị vô hiệu âm thầm bởi dòng CŨ còn sót lại phía dưới. Xem review
+    2026-09-17 (repro thật bởi security-reviewer)."""
     from dotenv.main import dotenv_values
 
     import edge_collector.settings_api as settings_api
@@ -110,10 +110,10 @@ def test_write_env_file_drops_stale_duplicate_key(tmp_path):
 
 
 def test_post_setup_writes_in_place_does_not_replace_inode(client, tmp_path):
-    """Docker bind-mount 1 file .env rieng -> os.replace() (tempfile+rename cua
-    python-dotenv set_key) crash 'Device or resource busy' vi khong swap duoc
-    inode dang bi mount - xem review 2026-09-17. Fix phai ghi TAI CHO (truncate)
-    - inode truoc/sau save phai la MOT, khong duoc tao file moi roi rename de."""
+    """Docker bind-mount 1 file .env riêng -> os.replace() (tempfile+rename của
+    python-dotenv set_key) crash 'Device or resource busy' vì không swap được
+    inode đang bị mount - xem review 2026-09-17. Fix phải ghi TẠI CHỖ (truncate)
+    - inode trước/sau save phải là MỘT, không được tạo file mới rồi rename đè."""
     env_path = tmp_path / ".env"
     env_path.write_text("EDGE_CODE=OLD\n")
     inode_before = env_path.stat().st_ino
@@ -180,8 +180,8 @@ def test_form_values_are_html_escaped(client):
 
 
 def test_post_setup_preserves_value_containing_hash(client, tmp_path):
-    """quote_mode='never' cu tung lam dotenv coi '# ...' la comment va cat cut
-    gia tri khi doc lai - xem review 2026-09-17."""
+    """quote_mode='never' cũ từng làm dotenv coi '# ...' là comment và cắt cụt
+    giá trị khi đọc lại - xem review 2026-09-17."""
     form = _valid_form()
     form["EDGE_NAME"] = "Line #5 test"
     resp = client.post("/setup", data=form)
@@ -220,10 +220,10 @@ def test_post_setup_accepts_same_origin_request(client):
 
 
 def test_post_setup_hot_reloads_main_url_without_restart(client):
-    """EDGE_MAIN_URL khong nam trong config.RESTART_REQUIRED_KEYS - phai co
-    hieu luc NGAY tren singleton `settings` sau khi Save, khong can restart
-    process. (config.settings duoc _restore_settings_singleton trong
-    conftest.py tu dong khoi phuc sau moi test.)"""
+    """EDGE_MAIN_URL không nằm trong config.RESTART_REQUIRED_KEYS - phải có
+    hiệu lực NGAY trên singleton `settings` sau khi Save, không cần restart
+    process. (config.settings được _restore_settings_singleton trong
+    conftest.py tự động khôi phục sau mỗi test.)"""
     form = _valid_form()
     form["EDGE_MAIN_URL"] = "https://new-odoo.example"
     resp = client.post("/setup", data=form)
@@ -232,10 +232,10 @@ def test_post_setup_hot_reloads_main_url_without_restart(client):
 
 
 def test_post_setup_blank_edge_code_keeps_currently_active_value(client, tmp_path):
-    """De trong EDGE_CODE = 'giu nguyen' (dung UX hint), KHONG duoc ghi rong
-    xuong .env - neu khong, restart THAT sau nay se tu sinh edge_code MOI
-    (Settings.__init__) khac han code dang chay, mat khop voi pcm.edge.code
-    da dang ky ben Odoo. Xem review 2026-09-17 (hot-reload) finding Critical."""
+    """Để trống EDGE_CODE = 'giữ nguyên' (đúng UX hint), KHÔNG được ghi rỗng
+    xuống .env - nếu không, restart THẬT sau này sẽ tự sinh edge_code MỚI
+    (Settings.__init__) khác hẳn code đang chạy, mất khớp với pcm.edge.code
+    đã đăng ký bên Odoo. Xem review 2026-09-17 (hot-reload) finding Critical."""
     config.settings.edge_code = "EDGE-ALREADY-REGISTERED"
     form = _valid_form()
     form["EDGE_CODE"] = ""
@@ -257,9 +257,9 @@ def test_post_setup_hot_reloads_timing_interval_without_restart(client):
 
 
 def test_post_setup_does_not_hot_reload_restart_required_fields(client):
-    """EDGE_LISTEN_PORT nam trong RESTART_REQUIRED_KEYS - Settings.reload()
-    KHONG duoc dung toi field nay (socket da bind co dinh luc startup, cap
-    nhat gia tri trong object cung khong co tac dung gi, chi de gay hieu lam)."""
+    """EDGE_LISTEN_PORT nằm trong RESTART_REQUIRED_KEYS - Settings.reload()
+    KHÔNG được đụng tới field này (socket đã bind cố định lúc startup, cập
+    nhật giá trị trong object cũng không có tác dụng gì, chỉ để gây hiểu lầm)."""
     original_port = config.settings.listen_port
     form = _valid_form()
     form["EDGE_LISTEN_PORT"] = "9999"
@@ -277,9 +277,9 @@ def test_post_setup_marks_exactly_restart_required_fields_in_ui(client):
 
 
 def test_post_setup_calls_agent_refresh_base_url_when_present(tmp_path, monkeypatch):
-    """/setup chi ghi settings.main_url - httpx.AsyncClient cua OdooClient
-    dang chay bake base_url luc __init__, phai duoc goi refresh_base_url()
-    tuong minh moi thay doi that su ap dung cho request TIEP THEO."""
+    """/setup chỉ ghi settings.main_url - httpx.AsyncClient của OdooClient
+    đang chạy bake base_url lúc __init__, phải được gọi refresh_base_url()
+    tường minh mới thay đổi thật sự áp dụng cho request TIẾP THEO."""
     monkeypatch.setattr(settings_api, "_ENV_PATH", tmp_path / ".env")
     app = FastAPI()
     app.include_router(settings_api.router)
@@ -302,19 +302,19 @@ def test_post_setup_calls_agent_refresh_base_url_when_present(tmp_path, monkeypa
 
 
 def test_post_setup_skips_agent_refresh_when_absent(client):
-    """App test chuan (fixture `client`) khong gan app.state.agent - setup_post
-    phai bo qua an toan (getattr default None), khong duoc crash 500."""
+    """App test chuẩn (fixture `client`) không gán app.state.agent - setup_post
+    phải bỏ qua an toàn (getattr default None), không được crash 500."""
     resp = client.post("/setup", data=_valid_form())
     assert resp.status_code == 200
 
 
 def test_is_same_origin_rejects_when_scheme_mismatched(client):
     """Regression cho bug CSRF false-reject qua reverse-proxy/tunnel (xem
-    review 2026-09-17, fix o tang uvicorn startup qua EDGE_FORWARDED_ALLOW_IPS
-    - KHONG sua logic _is_same_origin). Mo phong tinh trang TRUOC/CHUA trust
-    proxy dung: request.url.scheme van la http (fixture `client` mac dinh
-    http://testserver) trong khi Origin tu trinh duyet qua tunnel TLS-terminating
-    la https -> phai bi reject (403), dung hanh vi bug da gap thuc te."""
+    review 2026-09-17, fix ở tầng uvicorn startup qua EDGE_FORWARDED_ALLOW_IPS
+    - KHÔNG sửa logic _is_same_origin). Mô phỏng tình trạng TRƯỚC/CHƯA trust
+    proxy đúng: request.url.scheme vẫn là http (fixture `client` mặc định
+    http://testserver) trong khi Origin từ trình duyệt qua tunnel TLS-terminating
+    là https -> phải bị reject (403), đúng hành vi bug đã gặp thực tế."""
     resp = client.post("/setup", data=_valid_form(),
                         headers={"origin": "https://testserver"})
     assert resp.status_code == 403
@@ -322,12 +322,12 @@ def test_is_same_origin_rejects_when_scheme_mismatched(client):
 
 
 def test_is_same_origin_accepts_when_scheme_matches(tmp_path, monkeypatch):
-    """Cung Origin https nhung request.url.scheme CUNG la https (mo phong SAU
-    KHI ProxyHeadersMiddleware rewrite dung scheme, nho EDGE_FORWARDED_ALLOW_IPS
-    da duoc cau hinh trust dung peer IP cua proxy/tunnel) -> phai duoc chap
-    nhan, khong con 403 CSRF false-reject. Dung TestClient rieng voi base_url
-    https:// de request.url.scheme la https (fixture `client` mac dinh
-    http://testserver, khong the ep scheme qua header)."""
+    """Cùng Origin https nhưng request.url.scheme CŨNG là https (mô phỏng SAU
+    KHI ProxyHeadersMiddleware rewrite đúng scheme, nhờ EDGE_FORWARDED_ALLOW_IPS
+    đã được cấu hình trust đúng peer IP của proxy/tunnel) -> phải được chấp
+    nhận, không còn 403 CSRF false-reject. Dùng TestClient riêng với base_url
+    https:// để request.url.scheme là https (fixture `client` mặc định
+    http://testserver, không thể ép scheme qua header)."""
     monkeypatch.setattr(settings_api, "_ENV_PATH", tmp_path / ".env")
     app = FastAPI()
     app.include_router(settings_api.router)
@@ -345,14 +345,14 @@ def test_setup_get_lists_forwarded_allow_ips_field(client):
     assert resp.status_code == 200
     assert 'id="EDGE_FORWARDED_ALLOW_IPS"' in resp.text
     assert "Trusted reverse-proxy IPs" in resp.text
-    # EDGE_FORWARDED_ALLOW_IPS nam trong RESTART_REQUIRED_KEYS -> so badge
-    # "restart" phai dung bang so field trong tap do (khong thieu, khong thua).
+    # EDGE_FORWARDED_ALLOW_IPS nằm trong RESTART_REQUIRED_KEYS -> số badge
+    # "restart" phải đúng bằng số field trong tập đó (không thiếu, không thừa).
     assert resp.text.count(" restart</span>") == len(config.RESTART_REQUIRED_KEYS)
 
 
 def test_setup_activity_returns_empty_rows_when_store_missing():
-    """FastAPI() tran (khong qua lifespan that, giong pattern test agent=None
-    o setup_post) khong co app.state.store -> phai tra rong an toan, KHONG
+    """FastAPI() trần (không qua lifespan thật, giống pattern test agent=None
+    ở setup_post) không có app.state.store -> phải trả rỗng an toàn, KHÔNG
     crash 500 - xem review 2026-09-17 (panel 'Live activity')."""
     app = FastAPI()
     app.include_router(settings_api.router)
@@ -384,15 +384,15 @@ def test_setup_activity_returns_recent_rows_from_store(tmp_path):
     assert len(body["rows"]) == 2
     assert {row["serial"] for row in body["rows"]} == {"EDGE-NODE-1"}
     assert all(row["age_s"] >= 0 for row in body["rows"])
-    # ts lon hon (1001.0, kenh hum) phai dung TRUOC (DESC theo ts).
+    # ts lớn hơn (1001.0, kênh hum) phải đứng TRƯỚC (DESC theo ts).
     assert body["rows"][0]["ch"] == "hum"
 
 
 def test_setup_get_activity_script_escapes_via_textcontent(client):
-    """_ACTIVITY_SCRIPT phai duoc nhung nguyen ven vao HTML /setup - day la co
-    che escape client-side DUY NHAT cho du lieu serial/ch/s den tu thiet bi
-    NGOAI (node_agent) truoc khi noi vao innerHTML, tranh XSS luu tru qua
-    history. Test string-contains don gian la du, khong can headless browser
+    """_ACTIVITY_SCRIPT phải được nhúng nguyên vẹn vào HTML /setup - đây là cơ
+    chế escape client-side DUY NHẤT cho dữ liệu serial/ch/s đến từ thiết bị
+    NGOÀI (node_agent) trước khi nối vào innerHTML, tránh XSS lưu trữ qua
+    history. Test string-contains đơn giản là đủ, không cần headless browser
     - xem review 2026-09-17 (panel 'Live activity')."""
     resp = client.get("/setup")
     assert resp.status_code == 200
@@ -401,14 +401,14 @@ def test_setup_get_activity_script_escapes_via_textcontent(client):
 
 
 def test_setup_post_returns_clear_error_when_env_write_fails(client, monkeypatch):
-    """Regression cho finding docker-reviewer 2026-09-17: container chay
-    non-root (uid 1000) co the khong ghi duoc .env bind-mount tu host (vd
-    file thuoc so huu root/user khac tren host) - TRUOC KHI fix, OSError tu
-    _write_env_file() khong duoc bat -> 500 mac dinh cua FastAPI (traceback
-    tho, khong ro nguyen nhan la loi permission chu khong phai bug logic).
-    Mo phong bang monkeypatch _write_env_file de raise PermissionError (dang
-    con cua OSError) thay vi chmod file that - on dinh hon vi test co the
-    chay boi root (bo qua permission bit)."""
+    """Regression cho finding docker-reviewer 2026-09-17: container chạy
+    non-root (uid 1000) có thể không ghi được .env bind-mount từ host (vd
+    file thuộc sở hữu root/user khác trên host) - TRƯỚC KHI fix, OSError từ
+    _write_env_file() không được bắt -> 500 mặc định của FastAPI (traceback
+    thô, không rõ nguyên nhân là lỗi permission chứ không phải bug logic).
+    Mô phỏng bằng monkeypatch _write_env_file để raise PermissionError (dạng
+    con của OSError) thay vì chmod file thật - ổn định hơn vì test có thể
+    chạy bởi root (bỏ qua permission bit)."""
     def _raise_permission_error(path, values):
         raise PermissionError("[Errno 13] Permission denied: '%s'" % path)
 
@@ -423,11 +423,11 @@ def test_setup_post_returns_clear_error_when_env_write_fails(client, monkeypatch
 
 
 def test_validate_rejects_invalid_forwarded_allow_ips(client, tmp_path):
-    """Regression cho finding python-reviewer 2026-09-17: truoc day gia tri
-    sai chinh ta cua EDGE_FORWARDED_ALLOW_IPS IM LANG khong co tac dung gi
-    (uvicorn's _TrustedHosts fail-closed, khong bao gio crash, chi khong bao
-    gio khop client that - khong ai biet TAI SAO trust proxy khong hoat dong).
-    Gio phai bi tu choi NGAY luc Save (400), KHONG duoc ghi xuong .env."""
+    """Regression cho finding python-reviewer 2026-09-17: trước đây giá trị
+    sai chính tả của EDGE_FORWARDED_ALLOW_IPS IM LẶNG không có tác dụng gì
+    (uvicorn's _TrustedHosts fail-closed, không bao giờ crash, chỉ không bao
+    giờ khớp client thật - không ai biết TẠI SAO trust proxy không hoạt động).
+    Giờ phải bị từ chối NGAY lúc Save (400), KHÔNG được ghi xuống .env."""
     form = _valid_form()
     form["EDGE_FORWARDED_ALLOW_IPS"] = "not-an-ip, 10.0.0.0/8"
 
@@ -441,10 +441,10 @@ def test_validate_rejects_invalid_forwarded_allow_ips(client, tmp_path):
 
 
 def test_validate_rejects_invalid_mqtt_consumer_url_scheme(client, tmp_path):
-    """Patch MQTT (merge tu production): EDGE_MQTT_CONSUMER_URL sai scheme
-    phai bi tu choi ngay luc Save - paho.mqtt.Client._split_url() (mqtt_consumer.py)
-    chi biet strip 'mqtt://'/'tcp://', mot URL http:// se bi hieu nham thanh
-    host 'http', im lang khong noi duoc broker nao ca."""
+    """Patch MQTT (merge từ production): EDGE_MQTT_CONSUMER_URL sai scheme
+    phải bị từ chối ngay lúc Save - paho.mqtt.Client._split_url() (mqtt_consumer.py)
+    chỉ biết strip 'mqtt://'/'tcp://', một URL http:// sẽ bị hiểu nhầm thành
+    host 'http', im lặng không nối được broker nào cả."""
     form = _valid_form()
     form["EDGE_MQTT_CONSUMER_URL"] = "http://192.168.5.190:1883"
 
@@ -469,10 +469,10 @@ def test_validate_accepts_mqtt_tcp_and_blank_consumer_url(client):
 
 
 def test_validate_rejects_mqtts_consumer_url(client):
-    """mqtt_consumer._split_url() chi biet strip "mqtt://"/"tcp://" va khong
-    goi tls_set() o dau ca - "mqtts://"/"ssl://" se bi parse SAI (host thanh
-    chuoi "mqtts" thay vi hostname that) ma khong bao loi gi, nen phai bi
-    chan tu luc validate - xem python-reviewer 2026-09-24."""
+    """mqtt_consumer._split_url() chỉ biết strip "mqtt://"/"tcp://" và không
+    gọi tls_set() ở đâu cả - "mqtts://"/"ssl://" sẽ bị parse SAI (host thành
+    chuỗi "mqtts" thay vì hostname thật) mà không báo lỗi gì, nên phải bị
+    chặn từ lúc validate - xem python-reviewer 2026-09-24."""
     form = _valid_form()
     form["EDGE_MQTT_CONSUMER_URL"] = "mqtts://broker.local:8883"
 
@@ -483,9 +483,9 @@ def test_validate_rejects_mqtts_consumer_url(client):
 
 
 def test_validate_accepts_wildcard_and_valid_cidr(client):
-    """"*" (wildcard - trust MOI proxy, canh bao rieng trong docstring field,
-    khong phai loi validate) va danh sach IP/CIDR hop le (co the tron IP don
-    le lan CIDR) deu phai duoc chap nhan."""
+    """"*" (wildcard - trust MỌI proxy, cảnh báo riêng trong docstring field,
+    không phải lỗi validate) và danh sách IP/CIDR hợp lệ (có thể trộn IP đơn
+    lẻ lẫn CIDR) đều phải được chấp nhận."""
     form = _valid_form()
     form["EDGE_FORWARDED_ALLOW_IPS"] = "*"
     resp = client.post("/setup", data=form)
@@ -500,10 +500,10 @@ def test_validate_accepts_wildcard_and_valid_cidr(client):
 
 
 def test_setup_get_wraps_notice_text_in_single_span(client):
-    """Regression cho bug CSS Flexbox co san (`.notice{display:flex}` chua
-    text-node xen `<b>` khien vo thanh nhieu cot) - toan bo noi dung text
-    (ke ca `<b>restart</b>`) phai nam trong DUY NHAT 1 `<span>` de la 1 flex-
-    item duy nhat, khong tach rieng."""
+    """Regression cho bug CSS Flexbox có sẵn (`.notice{display:flex}` chứa
+    text-node xen `<b>` khiến vỡ thành nhiều cột) - toàn bộ nội dung text
+    (kể cả `<b>restart</b>`) phải nằm trong DUY NHẤT 1 `<span>` để là 1 flex-
+    item duy nhất, không tách riêng."""
     resp = client.get("/setup")
     assert resp.status_code == 200
     assert "<span>Saving applies most changes immediately." in resp.text
@@ -511,16 +511,16 @@ def test_setup_get_wraps_notice_text_in_single_span(client):
 
 
 class _FakeStoreWithApiKey:
-    """Store gia lap chi implement kv_get("api_key") - du cho test /setup va
-    /setup/api_key doc api_key, khong can Store SQLite that."""
+    """Store giả lập chỉ implement kv_get("api_key") - đủ cho test /setup và
+    /setup/api_key đọc api_key, không cần Store SQLite thật."""
 
     def kv_get(self, key, default=None):
-        return "testkey1234abcd" if key == "api_key" else default  # secret-allow: test fixture, khong phai key that
+        return "testkey1234abcd" if key == "api_key" else default  # secret-allow: test fixture, không phải key thật
 
 
 def test_mask_api_key_none_and_short_and_normal():
-    """6 dau cham CO DINH (khong ti le theo do dai key that, tranh lo metadata
-    do dai) + 4 ky tu cuoi - xem docstring _mask_api_key()."""
+    """6 dấu chấm CỐ ĐỊNH (không tỉ lệ theo độ dài key thật, tránh lộ metadata
+    độ dài) + 4 ký tự cuối - xem docstring _mask_api_key()."""
     assert settings_api._mask_api_key(None) is None
     assert settings_api._mask_api_key("") is None
 
@@ -532,9 +532,9 @@ def test_mask_api_key_none_and_short_and_normal():
 
 
 def test_setup_get_shows_not_yet_received_when_no_api_key():
-    """FastAPI() tran (khong co app.state.store, giong pattern test activity
-    da co) -> phai hien thong bao "chua nhan duoc", KHONG co nut Copy (khong
-    co gi de copy)."""
+    """FastAPI() trần (không có app.state.store, giống pattern test activity
+    đã có) -> phải hiện thông báo "chưa nhận được", KHÔNG có nút Copy (không
+    có gì để copy)."""
     app = FastAPI()
     app.include_router(settings_api.router)
     test_client = TestClient(app)
@@ -547,10 +547,10 @@ def test_setup_get_shows_not_yet_received_when_no_api_key():
 
 
 def test_setup_get_shows_masked_key_and_copy_button_when_present():
-    """Assertion quan trong nhat: full raw api_key KHONG BAO GIO duoc nhung
-    vao HTML /setup (chi masked) - /setup co the truy cap qua domain public
-    (tunnel), lo full secret qua view-source/devtools se rat nguy hiem. Chi
-    GET /setup/api_key (endpoint rieng, goi luc bam Copy) moi duoc tra raw -
+    """Assertion quan trọng nhất: full raw api_key KHÔNG BAO GIỜ được nhúng
+    vào HTML /setup (chỉ masked) - /setup có thể truy cập qua domain public
+    (tunnel), lộ full secret qua view-source/devtools sẽ rất nguy hiểm. Chỉ
+    GET /setup/api_key (endpoint riêng, gọi lúc bấm Copy) mới được trả raw -
     xem docstring _mask_api_key()/setup_api_key()."""
     app = FastAPI()
     app.include_router(settings_api.router)
@@ -566,8 +566,8 @@ def test_setup_get_shows_masked_key_and_copy_button_when_present():
 
 
 def test_setup_api_key_endpoint_returns_raw_value():
-    """GET /setup/api_key la endpoint DUY NHAT duoc phep tra raw value - thiet
-    ke co chu dich (goi tu JS luc bam Copy), khong phai thieu sot."""
+    """GET /setup/api_key là endpoint DUY NHẤT được phép trả raw value - thiết
+    kế có chủ đích (gọi từ JS lúc bấm Copy), không phải thiếu sót."""
     app = FastAPI()
     app.include_router(settings_api.router)
     app.state.store = _FakeStoreWithApiKey()
@@ -591,14 +591,14 @@ def test_setup_api_key_endpoint_returns_null_when_store_missing():
 
 
 def test_setup_get_api_key_script_has_fallback_copy(client):
-    """Regression cho bug that: navigator.clipboard.writeText() CHI hoat dong
-    trong secure context (HTTPS/localhost) - truy cap /setup qua LAN HTTP
-    thuong (vd http://192.168.5.190:8090/setup, threat-model goc cua project)
-    khien nut Copy "khong lam gi" vi Clipboard API khong ton tai/bi chan va
-    `.catch(function(){})` cu nuot loi im lang. Verify ca 2 nhanh (Clipboard
-    API hien dai VA fallback execCommand('copy')) deu co mat nguyen ven trong
-    HTML - string-contains don gian, khong chay JS that (headless browser
-    ngoai scope pytest, xem 'Scope da KHONG cover' vong truoc)."""
+    """Regression cho bug thật: navigator.clipboard.writeText() CHỈ hoạt động
+    trong secure context (HTTPS/localhost) - truy cập /setup qua LAN HTTP
+    thường (vd http://192.168.5.190:8090/setup, threat-model gốc của project)
+    khiến nút Copy "không làm gì" vì Clipboard API không tồn tại/bị chặn và
+    `.catch(function(){})` cũ nuốt lỗi im lặng. Verify cả 2 nhánh (Clipboard
+    API hiện đại VÀ fallback execCommand('copy')) đều có mặt nguyên vẹn trong
+    HTML - string-contains đơn giản, không chạy JS thật (headless browser
+    ngoài scope pytest, xem 'Scope đã KHÔNG cover' vòng trước)."""
     resp = client.get("/setup")
     assert resp.status_code == 200
     assert "navigator.clipboard && navigator.clipboard.writeText" in resp.text
@@ -607,19 +607,19 @@ def test_setup_get_api_key_script_has_fallback_copy(client):
 
 
 def test_setup_get_no_gate_when_token_empty(client):
-    """Tuong thich nguoc: EDGE_SETUP_TOKEN mac dinh rong (`config.settings.
+    """Tương thích ngược: EDGE_SETUP_TOKEN mặc định rỗng (`config.settings.
     setup_token == ""` - xem conftest.py `_clean_edge_env`/singleton baseline)
-    -> KHONG gate gi, deployment cu chua cau hinh token khong duoc regression
-    thanh 401 - xem python-reviewer 2026-09-17 (finding lo credential /setup/api_key)."""
+    -> KHÔNG gate gì, deployment cũ chưa cấu hình token không được regression
+    thành 401 - xem python-reviewer 2026-09-17 (finding lộ credential /setup/api_key)."""
     assert config.settings.setup_token == ""
     resp = client.get("/setup")
     assert resp.status_code == 200
 
 
 def test_setup_requires_basic_auth_when_token_set(client):
-    """`config.settings.setup_token` duoc `_restore_settings_singleton`
-    (conftest.py, autouse) tu dong khoi phuc sau test nay - khong can fixture
-    rieng. Basic Auth: username bat ky, password phai khop token qua
+    """`config.settings.setup_token` được `_restore_settings_singleton`
+    (conftest.py, autouse) tự động khôi phục sau test này - không cần fixture
+    riêng. Basic Auth: username bất kỳ, password phải khớp token qua
     secrets.compare_digest."""
     config.settings.setup_token = "sekret"  # secret-allow: test fixture
 
@@ -635,8 +635,8 @@ def test_setup_requires_basic_auth_when_token_set(client):
 
 
 def test_setup_api_key_endpoint_requires_auth_when_token_set(client):
-    """GET /setup/api_key la endpoint driver chinh cua finding (tra RAW
-    credential) - phai co test rieng, khong chi dua vao test /setup."""
+    """GET /setup/api_key là endpoint driver chính của finding (trả RAW
+    credential) - phải có test riêng, không chỉ dựa vào test /setup."""
     config.settings.setup_token = "sekret"  # secret-allow: test fixture
 
     resp_no_auth = client.get("/setup/api_key")
@@ -650,8 +650,8 @@ def test_setup_api_key_endpoint_requires_auth_when_token_set(client):
 
 
 def test_setup_post_requires_auth_when_token_set(client):
-    """Gate auth phai chay TRUOC _is_same_origin check - thieu auth phai bi
-    401 NGAY CA KHI Origin header dung (khong duoc lot qua den buoc CSRF)."""
+    """Gate auth phải chạy TRƯỚC _is_same_origin check - thiếu auth phải bị
+    401 NGAY CẢ KHI Origin header đúng (không được lọt qua đến bước CSRF)."""
     config.settings.setup_token = "sekret"  # secret-allow: test fixture
 
     resp = client.post("/setup", data=_valid_form(),
@@ -661,10 +661,10 @@ def test_setup_post_requires_auth_when_token_set(client):
 
 
 def test_mask_api_key_short_key_fully_masked():
-    """Regression cho finding Minor cung dot review: key <=8 ky tu -
-    str(key)[-4:] tren chuoi ngan se tra ve NGUYEN VEN ca chuoi, lam 'mask' lo
-    100% key - gio phai che TOAN BO ("••••••"),
-    khong lo bat ky ky tu nao cua key that."""
+    """Regression cho finding Minor cùng đợt review: key <=8 ký tự -
+    str(key)[-4:] trên chuỗi ngắn sẽ trả về NGUYÊN VẸN cả chuỗi, làm 'mask' lộ
+    100% key - giờ phải che TOÀN BỘ ("••••••"),
+    không lộ bất kỳ ký tự nào của key thật."""
     masked = settings_api._mask_api_key("abcdefgh")  # 8 ky tu, dung nguong <=8
 
     assert masked == "••••••"
@@ -673,12 +673,12 @@ def test_mask_api_key_short_key_fully_masked():
 
 
 def test_setup_requires_basic_auth_rejects_non_ascii_password_without_crash(client):
-    """Regression cho bug crash that: secrets.compare_digest(str, str) RAISE
-    TypeError khi 1 trong 2 chuoi chua ky tu non-ASCII - ai do go dai password
-    non-ASCII (khong can biet token that) se lam route tra ve 500 thay vi 401
-    (loi lo ra qua stack trace, te hon ca reject binh thuong). Gio phai encode
-    utf-8 sang bytes truoc khi so - assertion quan trong nhat la 401, KHONG
-    phai 500 - xem python-reviewer 2026-09-17."""
+    """Regression cho bug crash thật: secrets.compare_digest(str, str) RAISE
+    TypeError khi 1 trong 2 chuỗi chứa ký tự non-ASCII - ai đó gõ đại password
+    non-ASCII (không cần biết token thật) sẽ làm route trả về 500 thay vì 401
+    (lỗi lộ ra qua stack trace, tệ hơn cả reject bình thường). Giờ phải encode
+    utf-8 sang bytes trước khi so - assertion quan trọng nhất là 401, KHÔNG
+    phải 500 - xem python-reviewer 2026-09-17."""
     config.settings.setup_token = "sekret"  # secret-allow: test fixture
     credentials = base64.b64encode("user:héllo".encode("utf-8")).decode("ascii")
 
@@ -688,10 +688,10 @@ def test_setup_requires_basic_auth_rejects_non_ascii_password_without_crash(clie
 
 
 def test_summarize_pcm_request_for_each_endpoint():
-    """Panel 'PCM requests' - doi xung NGUOC CHIEU voi 'Live activity'
-    (Odoo Main -> edge, khong phai node_agent -> edge). Verify ca 5 endpoint
-    + 2 gia tri cmd khac nhau cho /api/command (co trong _COMMAND_LABELS va
-    khong co, de bat regression fallback ve raw cmd)."""
+    """Panel 'PCM requests' - đối xứng NGƯỢC CHIỀU với 'Live activity'
+    (Odoo Main -> edge, không phải node_agent -> edge). Verify cả 5 endpoint
+    + 2 giá trị cmd khác nhau cho /api/command (có trong _COMMAND_LABELS và
+    không có, để bắt regression fallback về raw cmd)."""
     assert settings_api._summarize_pcm_request(
         {"endpoint": "/api/command", "serial": "EDGE1", "ch": "CH01", "cmd": "zero"}
     ) == "Zero on EDGE1 / CH01"
@@ -713,8 +713,8 @@ def test_summarize_pcm_request_for_each_endpoint():
 
 
 def test_setup_pcm_requests_endpoint_returns_rows(client):
-    """Module-level deque cua inbound_api.py dung chung ca tien trinh pytest -
-    don truoc/sau de khong ro ri sang test khac (cung tinh than
+    """Module-level deque của inbound_api.py dùng chung cả tiến trình pytest -
+    dọn trước/sau để không rò rỉ sang test khác (cùng tinh thần
     tests/test_inbound_api.py)."""
     inbound_api._recent_requests.clear()
     try:
@@ -726,7 +726,7 @@ def test_setup_pcm_requests_endpoint_returns_rows(client):
         assert resp.status_code == 200
         rows = resp.json()["rows"]
         assert len(rows) == 2
-        # appendleft - request MOI NHAT (log sau cung, /api/source/test) dung dau.
+        # appendleft - request MỚI NHẤT (log sau cùng, /api/source/test) đứng đầu.
         assert rows[0]["endpoint"] == "/api/source/test"
         assert rows[0]["summary"] == "Connection test (modbus)"
         assert rows[1]["summary"] == "Zero on EDGE1 / CH01"
@@ -736,8 +736,8 @@ def test_setup_pcm_requests_endpoint_returns_rows(client):
 
 
 def test_setup_pcm_requests_requires_auth_when_token_set(client):
-    """Route thu 5 cung phai duoc gate boi EDGE_SETUP_TOKEN giong 4 route
-    /setup/* con lai - tranh sot consistency khi them route moi."""
+    """Route thứ 5 cũng phải được gate bởi EDGE_SETUP_TOKEN giống 4 route
+    /setup/* còn lại - tránh sót consistency khi thêm route mới."""
     config.settings.setup_token = "sekret"  # secret-allow: test fixture
 
     resp_no_auth = client.get("/setup/pcm_requests")
@@ -748,8 +748,8 @@ def test_setup_pcm_requests_requires_auth_when_token_set(client):
 
 
 def test_post_setup_accepts_matching_fingerprint(client, tmp_path):
-    """Happy path: fingerprint lay tu GET (khop dung noi dung .env hien tai)
-    duoc gui kem POST -> Save binh thuong, khong bi guard chan."""
+    """Happy path: fingerprint lấy từ GET (khớp đúng nội dung .env hiện tại)
+    được gửi kèm POST -> Save bình thường, không bị guard chặn."""
     env_path = tmp_path / ".env"
     env_path.write_text("EDGE_MAIN_URL=http://odoo-main.local:8069\n")
 
@@ -767,12 +767,12 @@ def test_post_setup_accepts_matching_fingerprint(client, tmp_path):
 
 
 def test_post_setup_rejects_stale_fingerprint_and_preserves_external_change(client, tmp_path):
-    """Tai hien dung bug that da fix (xem docstring _env_fingerprint()): 1 tab
-    /setup con mo voi fingerprint CU (stale_fingerprint) trong luc .env bi sua
-    TRUC TIEP tu ben ngoai (mo phong SSH, hoac tab khac da Save truoc). Tab cu
-    Save 1 field KHONG lien quan (EDGE_NAME) phai bi TU CHOI (409), va quan
-    trong nhat: noi dung .env phai VAN CON dung gia tri da sua tu ben ngoai -
-    KHONG duoc ghi de boi gia tri tu form cua tab cu."""
+    """Tái hiện đúng bug thật đã fix (xem docstring _env_fingerprint()): 1 tab
+    /setup còn mở với fingerprint CŨ (stale_fingerprint) trong lúc .env bị sửa
+    TRỰC TIẾP từ bên ngoài (mô phỏng SSH, hoặc tab khác đã Save trước). Tab cũ
+    Save 1 field KHÔNG liên quan (EDGE_NAME) phải bị TỪ CHỐI (409), và quan
+    trọng nhất: nội dung .env phải VẪN CÒN đúng giá trị đã sửa từ bên ngoài -
+    KHÔNG được ghi đè bởi giá trị từ form của tab cũ."""
     env_path = tmp_path / ".env"
     env_path.write_text(
         "EDGE_MAIN_URL=http://odoo-main.local:8069\n"
@@ -783,9 +783,9 @@ def test_post_setup_rejects_stale_fingerprint_and_preserves_external_change(clie
     assert resp_get.status_code == 200
     stale_fingerprint = _extract_fingerprint(resp_get.text)
 
-    # Sua truc tiep .env "tu ben ngoai" - vd qua SSH - TRONG LUC tab /setup
-    # tren van con mo voi stale_fingerprint. Noi dung file doi -> fingerprint
-    # that su tren dia cung doi theo, khac han stale_fingerprint.
+    # Sửa trực tiếp .env "từ bên ngoài" - vd qua SSH - TRONG LÚC tab /setup
+    # trên vẫn còn mở với stale_fingerprint. Nội dung file đổi -> fingerprint
+    # thật sự trên đĩa cũng đổi theo, khác hẳn stale_fingerprint.
     env_path.write_text(
         "EDGE_MAIN_URL=http://odoo-main.local:8069\n"
         "EDGE_FORWARDED_ALLOW_IPS=10.0.0.5/32\n"
@@ -801,29 +801,29 @@ def test_post_setup_rejects_stale_fingerprint_and_preserves_external_change(clie
     assert resp.status_code == 409
     assert "changed elsewhere" in resp.text.lower()
     assert "reopen /setup" in resp.text.lower()
-    # Assertion CHINH chung minh guard hoat dong: .env phai VAN dung noi dung
-    # da sua ben ngoai (EDGE_FORWARDED_ALLOW_IPS=10.0.0.5/32), KHONG bi ghi de
-    # boi gia tri POST gui len - day chinh la du lieu da mat that trong bug goc.
+    # Assertion CHÍNH chứng minh guard hoạt động: .env phải VẪN đúng nội dung
+    # đã sửa bên ngoài (EDGE_FORWARDED_ALLOW_IPS=10.0.0.5/32), KHÔNG bị ghi đè
+    # bởi giá trị POST gửi lên - đây chính là dữ liệu đã mất thật trong bug gốc.
     assert env_path.read_text() == external_content
     assert "Changed From Stale Tab" not in env_path.read_text()
     assert "10.0.0.5/32" in env_path.read_text()
 
 
 def test_post_setup_conflict_page_resubmit_is_safe_noop_preserving_external_change(client, tmp_path):
-    """Regression cho finding Critical python-reviewer 2026-09-25: nhanh 409
-    TRUOC FIX goi _render(values, ...) (data SUBMIT CU bi tu choi) - nhung
-    _render() luon TU TINH fingerprint MOI cho hidden field bat ke tham so
-    `values` la gi, nen trang loi 409 vo tinh mang theo "ve thong hanh" moi
-    KEM THEO data cu hien thi tren form. Bam Save LAN 2 NGAY TREN CHINH TRANG
-    LOI (khong can reload /setup) se dua fingerprint moi + data CU do qua
-    duoc guard, ghi de mat thay doi ngoai luong - tai dien dung bug goc. Fix:
-    doi sang _render(_current_values(), ...), nhat quan voi 403/500.
+    """Regression cho finding Critical python-reviewer 2026-09-25: nhánh 409
+    TRƯỚC FIX gọi _render(values, ...) (data SUBMIT CŨ bị từ chối) - nhưng
+    _render() luôn TỰ TÍNH fingerprint MỚI cho hidden field bất kể tham số
+    `values` là gì, nên trang lỗi 409 vô tình mang theo "vé thông hành" mới
+    KÈM THEO data cũ hiển thị trên form. Bấm Save LẦN 2 NGAY TRÊN CHÍNH TRANG
+    LỖI (không cần reload /setup) sẽ đưa fingerprint mới + data CŨ đó qua
+    được guard, ghi đè mất thay đổi ngoài luồng - tái diễn đúng bug gốc. Fix:
+    đổi sang _render(_current_values(), ...), nhất quán với 403/500.
 
-    Hanh vi DUNG sau fix: trang loi 409 hien thi CURRENT VALUES that su tren
-    dia (gom ca thay doi ngoai luong) kem fingerprint MOI khop file do. Neu
-    Nam bam Save lai NGAY tren trang loi ma KHONG sua gi, browser gui len
-    dung nhung gia tri dang hien thi (= _current_values()) - _write_env_file
-    ghi lai DUNG gia tri hien tai, safe no-op, KHONG mat thay doi ngoai luong."""
+    Hành vi ĐÚNG sau fix: trang lỗi 409 hiển thị CURRENT VALUES thật sự trên
+    đĩa (gồm cả thay đổi ngoài luồng) kèm fingerprint MỚI khớp file đó. Nếu
+    Nam bấm Save lại NGAY trên trang lỗi mà KHÔNG sửa gì, browser gửi lên
+    đúng những giá trị đang hiển thị (= _current_values()) - _write_env_file
+    ghi lại ĐÚNG giá trị hiện tại, safe no-op, KHÔNG mất thay đổi ngoài luồng."""
     env_path = tmp_path / ".env"
     env_path.write_text(
         "EDGE_MAIN_URL=http://odoo-main.local:8069\n"
@@ -834,8 +834,8 @@ def test_post_setup_conflict_page_resubmit_is_safe_noop_preserving_external_chan
     assert resp_get.status_code == 200
     stale_fingerprint = _extract_fingerprint(resp_get.text)
 
-    # Sua truc tiep .env "tu ben ngoai" - vd qua SSH - TRONG LUC tab /setup
-    # tren van con mo voi stale_fingerprint.
+    # Sửa trực tiếp .env "từ bên ngoài" - vd qua SSH - TRONG LÚC tab /setup
+    # trên vẫn còn mở với stale_fingerprint.
     env_path.write_text(
         "EDGE_MAIN_URL=http://odoo-main.local:8069\n"
         "EDGE_FORWARDED_ALLOW_IPS=10.0.0.5/32\n"
@@ -855,20 +855,20 @@ def test_post_setup_conflict_page_resubmit_is_safe_noop_preserving_external_chan
     fingerprint_from_error_page = _extract_fingerprint(resp1.text)
     assert fingerprint_from_error_page != stale_fingerprint
 
-    # Mo phong Nam bam Save lai NGAY TREN TRANG LOI ma KHONG sua field nao -
-    # browser that se gui dung CAC GIA TRI DANG HIEN THI tren form loi do, DOC
-    # LAI TU HTML (khong hardcode _current_values() - buggy/fixed deu tinh
-    # fingerprint moi giong het nhau, chi khac o VALUE hien thi cho tung field,
-    # nen phai scrape dung HTML moi phan biet duoc 2 truong hop).
+    # Mô phỏng Nam bấm Save lại NGAY TRÊN TRANG LỖI mà KHÔNG sửa field nào -
+    # browser thật sẽ gửi đúng CÁC GIÁ TRỊ ĐANG HIỂN THỊ trên form lỗi đó, ĐỌC
+    # LẠI TỪ HTML (không hardcode _current_values() - buggy/fixed đều tính
+    # fingerprint mới giống hệt nhau, chỉ khác ở VALUE hiển thị cho từng field,
+    # nên phải scrape đúng HTML mới phân biệt được 2 trường hợp).
     resubmit_data = _extract_rendered_form_values(resp1.text)
     resubmit_data["_env_fingerprint"] = fingerprint_from_error_page
 
     resp2 = client.post("/setup", data=resubmit_data)
 
-    # Guard cho qua (fingerprint khop - khong co gi doi them giua 2 request)
-    # NHUNG day phai la SAFE NO-OP: gia tri ghi xuong CHINH LA gia tri hien
-    # tai (gom ca thay doi ngoai luong), KHONG PHAI data cu bi tu choi o
-    # POST lan 1 - assertion CHINH chung minh finding da duoc fix dung.
+    # Guard cho qua (fingerprint khớp - không có gì đổi thêm giữa 2 request)
+    # NHƯNG đây phải là SAFE NO-OP: giá trị ghi xuống CHÍNH LÀ giá trị hiện
+    # tại (gồm cả thay đổi ngoài luồng), KHÔNG PHẢI data cũ bị từ chối ở
+    # POST lần 1 - assertion CHÍNH chứng minh finding đã được fix đúng.
     assert resp2.status_code == 200
     assert "Saved" in resp2.text
     final_content = env_path.read_text()
@@ -877,20 +877,20 @@ def test_post_setup_conflict_page_resubmit_is_safe_noop_preserving_external_chan
 
 
 def test_post_setup_without_fingerprint_field_skips_guard(client, tmp_path):
-    """Backward-compat: client cu (form render TRUOC khi tinh nang nay ton tai,
-    khong co hidden field _env_fingerprint) van phai Save duoc binh thuong du
-    .env da doi tu ben ngoai - guard chi active khi co gia tri de doi chieu
-    (best-effort, cung triet ly voi _is_same_origin())."""
+    """Backward-compat: client cũ (form render TRƯỚC khi tính năng này tồn tại,
+    không có hidden field _env_fingerprint) vẫn phải Save được bình thường dù
+    .env đã đổi từ bên ngoài - guard chỉ active khi có giá trị để đối chiếu
+    (best-effort, cùng triết lý với _is_same_origin())."""
     env_path = tmp_path / ".env"
     env_path.write_text("EDGE_MAIN_URL=http://odoo-main.local:8069\n")
 
-    client.get("/setup")  # mo phong tab cu da load, KHONG dung fingerprint tu day
+    client.get("/setup")  # mô phỏng tab cũ đã load, KHÔNG dùng fingerprint từ đây
 
-    # .env doi tu ben ngoai sau khi tab (gia lap) da mo.
+    # .env đổi từ bên ngoài sau khi tab (giả lập) đã mở.
     env_path.write_text("EDGE_MAIN_URL=http://odoo-main.local:8069\nEDGE_NAME=changed-externally\n")
 
     form = _valid_form()
-    assert "_env_fingerprint" not in form  # form "cu", khong co hidden field
+    assert "_env_fingerprint" not in form  # form "cũ", không có hidden field
 
     resp = client.post("/setup", data=form)
 

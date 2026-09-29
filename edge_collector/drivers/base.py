@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Giao dien chung cho moi driver nguon (pcm.source kind = opcua/modbus_tcp/
-modbus_rtu/serial/mqtt/sim). manager.py nap dung config._as_config() cua Odoo
-(xem pcm_source.py) va goi Reading callback moi khi co gia tri moi.
+"""Giao diện chung cho mỗi driver nguồn (pcm.source kind = opcua/modbus_tcp/
+modbus_rtu/serial/mqtt/sim). manager.py nạp đúng config._as_config() của Odoo
+(xem pcm_source.py) và gọi Reading callback mỗi khi có giá trị mới.
 
-on_reading(ch_code, v, s, q, ts, stable) — ts la epoch giay (float) hoac None
-(= 'bay gio', giong quy uoc _ts() trong ingest.py).
+on_reading(ch_code, v, s, q, ts, stable) — ts là epoch giây (float) hoặc None
+(= 'bây giờ', giống quy ước _ts() trong ingest.py).
 """
 import time
 from dataclasses import dataclass, field
@@ -21,25 +21,25 @@ class DriverStatus:
 
 
 class SourceDriver:
-    """Lop co so — moi driver ke thua va override cac ham can thiet."""
+    """Lớp cơ sở — mỗi driver kế thừa và override các hàm cần thiết."""
 
     kind = "base"
 
     def __init__(self, source_cfg: dict, channels: list, on_reading: ReadingCb):
         self.cfg = source_cfg
-        self.channels = channels or []          # channel._as_config() cua tung kenh gan vao nguon nay
+        self.channels = channels or []          # channel._as_config() của từng kênh gắn vào nguồn này
         self.code = source_cfg.get("code") or ""
         self.on_reading = on_reading
         self._status = DriverStatus()
 
-    # -- vong doi ----------------------------------------------------
+    # -- vòng đời ----------------------------------------------------
     async def start(self) -> None:
         raise NotImplementedError
 
     async def stop(self) -> None:
         pass
 
-    # -- quan sat ------------------------------------------------------
+    # -- quan sát ------------------------------------------------------
     def status(self) -> DriverStatus:
         return self._status
 
@@ -52,16 +52,16 @@ class SourceDriver:
     def _emit(self, ch: str, v=None, s=None, q=0, ts=None, stable=None):
         self.on_reading(ch, v, s, int(q or 0), ts if ts is not None else time.time(), stable)
 
-    # -- dieu khien (Odoo -> edge -> thiet bi) -------------------------
+    # -- điều khiển (Odoo -> edge -> thiết bị) -------------------------
     async def command(self, channel_code: str, cmd: str, value=None) -> dict:
-        return {"ok": False, "error": "command khong ho tro tren nguon '%s'" % self.kind}
+        return {"ok": False, "error": "command không hỗ trợ trên nguồn '%s'" % self.kind}
 
     async def browse(self, node_id=None, path=None) -> dict:
-        return {"ok": False, "error": "browse khong ho tro tren nguon '%s'" % self.kind}
+        return {"ok": False, "error": "browse không hỗ trợ trên nguồn '%s'" % self.kind}
 
     async def test(self) -> dict:
-        """Thu ket noi mot lan, dung cho pcm.source.action_test(). Mac dinh:
-        coi start() thanh cong la du (driver tu overide neu can chi tiet hon)."""
+        """Thử kết nối một lần, dùng cho pcm.source.action_test(). Mặc định:
+        coi start() thành công là đủ (driver tự override nếu cần chi tiết hơn)."""
         t0 = time.time()
         try:
             await self.start()

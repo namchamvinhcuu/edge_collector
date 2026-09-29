@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Regression test cho bug lam tron/cat cut (truncate) khi ghi setpoint xuong
-thiet bi Modbus that qua ModbusDriver.command().
+"""Regression test cho bug làm tròn/cắt cụt (truncate) khi ghi setpoint xuống
+thiết bị Modbus thật qua ModbusDriver.command().
 
-Bug: truoc fix, `_encode_32()` va nhanh i16/u16 trong `command()` dung
-`int(raw)` de ep `raw = (value - offset) / scale` ve so nguyen truoc khi ghi
-xuong register. Sai so dau phay dong lam `raw` ra vd 42.99999999999999 thay vi
-43.0 -> int() CAT CUT thanh 42, ghi SAI 1 don vi xuong thiet bi vat ly that
-(bien tan/PLC), KHONG co exception/log nao bao.
+Bug: trước fix, `_encode_32()` và nhánh i16/u16 trong `command()` dùng
+`int(raw)` để ép `raw = (value - offset) / scale` về số nguyên trước khi ghi
+xuống register. Sai số dấu phẩy động làm `raw` ra vd 42.99999999999999 thay vì
+43.0 -> int() CẮT CỤT thành 42, ghi SAI 1 đơn vị xuống thiết bị vật lý thật
+(biến tần/PLC), KHÔNG có exception/log nào báo.
 
-Da fix: doi `int()` -> `round()` o 3 cho (edge_collector/drivers/modbus.py
-dong 59/61/179 - so dong co the lech +-1..2 sau edit).
+Đã fix: đổi `int()` -> `round()` ở 3 chỗ (edge_collector/drivers/modbus.py
+dòng 59/61/179 - số dòng có thể lệch +-1..2 sau edit).
 
-Cac gia tri intended/scale duoi day la KET QUA QUET THUC NGHIEM that (khong
-doan) - xac nhan `int(raw) != intended` that su xay ra voi float thuc te cua
-Python, dam bao test khong phai gia dinh suong.
+Các giá trị intended/scale dưới đây là KẾT QUẢ QUÉT THỰC NGHIỆM thật (không
+đoán) - xác nhận `int(raw) != intended` thật sự xảy ra với float thực tế của
+Python, đảm bảo test không phải giả định suông.
 """
 import struct
 
@@ -21,8 +21,8 @@ import pytest
 
 from edge_collector.drivers.modbus import ModbusDriver, _encode_32
 
-# pytest-asyncio KHONG co trong requirements-dev.txt; du an dung anyio (da co
-# san qua httpx/starlette) - cung convention voi tests/test_scheduler.py.
+# pytest-asyncio KHÔNG có trong requirements-dev.txt; dự án dùng anyio (đã có
+# sẵn qua httpx/starlette) - cùng convention với tests/test_scheduler.py.
 pytestmark = pytest.mark.anyio
 
 
@@ -32,8 +32,8 @@ def anyio_backend():
 
 
 class _FakeAsyncModbusClient:
-    """Fake toi thieu cho pymodbus AsyncModbusTcpClient - chi ghi lai loi goi
-    write_register()/write_registers(), khong that su noi mang/thiet bi."""
+    """Fake tối thiểu cho pymodbus AsyncModbusTcpClient - chỉ ghi lại lời gọi
+    write_register()/write_registers(), không thật sự nối mạng/thiết bị."""
 
     def __init__(self):
         self.calls = []            # [(method, addr, value_or_values, device_id), ...]
@@ -48,8 +48,8 @@ class _FakeAsyncModbusClient:
 
 
 def _make_driver(dtype: str, scale: float, offset: float = 0.0, reg: str = "HR40001"):
-    """Dung ModbusDriver that (khong mock), chi bypass _connect() bang cach
-    gan thang self._client = fake - command() khong goi _connect()."""
+    """Dùng ModbusDriver thật (không mock), chỉ bypass _connect() bằng cách
+    gán thẳng self._client = fake - command() không gọi _connect()."""
     source_cfg = {
         "code": "SRC1",
         "kind": "modbus_tcp",
@@ -65,8 +65,8 @@ def _make_driver(dtype: str, scale: float, offset: float = 0.0, reg: str = "HR40
 
 
 def _expected_16bit_wire(intended: int) -> int:
-    """Gia tri raw 16-bit (two's complement dung cho ca i16/u16) ma
-    round(raw) & 0xFFFF PHAI cho ra khi raw thuc chat = intended."""
+    """Giá trị raw 16-bit (two's complement dùng cho cả i16/u16) mà
+    round(raw) & 0xFFFF PHẢI cho ra khi raw thực chất = intended."""
     return intended & 0xFFFF
 
 
@@ -79,17 +79,17 @@ def _expected_u32_regs(intended: int):
 
 
 # ---------------------------------------------------------------------------
-# 1) Happy-path regression qua command() - dtype u16 (mac dinh)
+# 1) Happy-path regression qua command() - dtype u16 (mặc định)
 # ---------------------------------------------------------------------------
 
 async def test_command_u16_rounds_float_error_instead_of_truncating():
-    """scale=0.1, value=4.3 -> raw = 4.3/0.1 = 42.99999999999999 (quet thuc
-    nghiem xac nhan). int(raw) se ra 42 (SAI - lech 1 don vi), round(raw) phai
-    ra 43 (dung, khop intended)."""
+    """scale=0.1, value=4.3 -> raw = 4.3/0.1 = 42.99999999999999 (quét thực
+    nghiệm xác nhận). int(raw) sẽ ra 42 (SAI - lệch 1 đơn vị), round(raw) phải
+    ra 43 (đúng, khớp intended)."""
     intended = 43
-    value = intended * 0.1          # = 4.3, tai tao dung cong thuc command()
+    value = intended * 0.1          # = 4.3, tái tạo đúng công thức command()
     raw = value / 0.1
-    assert int(raw) != intended and round(raw) == intended  # xac nhan tien de bug co that
+    assert int(raw) != intended and round(raw) == intended  # xác nhận tiền đề bug có thật
 
     driver = _make_driver(dtype="u16", scale=0.1)
     result = await driver.command("speed", "write", value)
@@ -101,13 +101,13 @@ async def test_command_u16_rounds_float_error_instead_of_truncating():
 
 
 # ---------------------------------------------------------------------------
-# 2) Edge case: gia tri AM cho i16 - round() phai xu ly dau dung, khong lech
+# 2) Edge case: giá trị ÂM cho i16 - round() phải xử lý dấu đúng, không lệch
 # ---------------------------------------------------------------------------
 
 async def test_command_i16_negative_rounds_correctly_not_truncated_toward_zero():
     """scale=0.1, intended=-1531 -> raw = -1531*0.1/0.1 = -1530.9999999999998
-    (quet thuc nghiem). int() cat ve phia 0 -> -1530 (SAI, lech 1 don vi va
-    sai huong voi so am). round() phai ra dung -1531."""
+    (quét thực nghiệm). int() cắt về phía 0 -> -1530 (SAI, lệch 1 đơn vị và
+    sai hướng với số âm). round() phải ra đúng -1531."""
     intended = -1531
     value = intended * 0.1
     raw = value / 0.1
@@ -123,7 +123,7 @@ async def test_command_i16_negative_rounds_correctly_not_truncated_toward_zero()
 
 
 # ---------------------------------------------------------------------------
-# 3) dtype i32 qua command() (nhanh else -> _encode_32) - duong tich hop
+# 3) dtype i32 qua command() (nhánh else -> _encode_32) - đường tích hợp
 # ---------------------------------------------------------------------------
 
 async def test_command_i32_rounds_float_error_via_encode_32():
@@ -142,7 +142,7 @@ async def test_command_i32_rounds_float_error_via_encode_32():
 
 
 # ---------------------------------------------------------------------------
-# 4) Edge case am cho i32 - dung truc tiep _encode_32() (unit test thuan)
+# 4) Edge case âm cho i32 - dùng trực tiếp _encode_32() (unit test thuần)
 # ---------------------------------------------------------------------------
 
 def test_encode_32_i32_negative_rounds_correctly():
@@ -155,7 +155,7 @@ def test_encode_32_i32_negative_rounds_correctly():
 
 
 # ---------------------------------------------------------------------------
-# 5) dtype u32 - dung truc tiep _encode_32() (unit test thuan)
+# 5) dtype u32 - dùng trực tiếp _encode_32() (unit test thuần)
 # ---------------------------------------------------------------------------
 
 def test_encode_32_u32_rounds_float_error():
@@ -168,15 +168,15 @@ def test_encode_32_u32_rounds_float_error():
 
 
 # ---------------------------------------------------------------------------
-# 6) f32 KHONG bi bug nay (dung float(value) tu dau, khong ep int) - guard
-#    de dam bao khong ai vo tinh doi nhanh f32 sang round()/int() sau nay.
+# 6) f32 KHÔNG bị bug này (dùng float(value) từ đầu, không ép int) - guard
+#    để đảm bảo không ai vô tình đổi nhánh f32 sang round()/int() sau này.
 # ---------------------------------------------------------------------------
 
 def test_encode_32_f32_keeps_fractional_value_not_rounded_to_integer():
-    """42.5 bieu dien CHINH XAC duoc trong float32 (khong dinh loi lam tron
-    precision) - neu ai vo tinh doi f32 sang round()/int() nhu 2 nhanh kia,
-    ket qua se thanh 42 hoac 43 thay vi giu nguyen 42.5."""
+    """42.5 biểu diễn CHÍNH XÁC được trong float32 (không dính lỗi làm tròn
+    precision) - nếu ai vô tình đổi f32 sang round()/int() như 2 nhánh kia,
+    kết quả sẽ thành 42 hoặc 43 thay vì giữ nguyên 42.5."""
     value = 42.5
     regs = _encode_32("f32", value)
     decoded = struct.unpack(">f", struct.pack(">HH", *regs))[0]
-    assert decoded == value          # giu nguyen phan thap phan, KHONG lam tron ve so nguyen
+    assert decoded == value          # giữ nguyên phần thập phân, KHÔNG làm tròn về số nguyên

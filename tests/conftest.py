@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Import settings_api.py keo theo config.py chay load_dotenv() nap .env THAT
-cua project vao os.environ (xem review 2026-09-17 muc 2 - fix dung chung
-DOTENV_PATH). Cac test hien tai doc gia tri qua _ENV_PATH/monkeypatch nen
-khong bi anh huong, nhung test SAU NAY cho config.py/Settings co the vo tinh
-doc nham EDGE_* tu .env that thay vi moi truong sach neu khong don truoc."""
+"""Import settings_api.py kéo theo config.py chạy load_dotenv() nạp .env THẬT
+của project vào os.environ (xem review 2026-09-17 mục 2 - fix dùng chung
+DOTENV_PATH). Các test hiện tại đọc giá trị qua _ENV_PATH/monkeypatch nên
+không bị ảnh hưởng, nhưng test SAU NÀY cho config.py/Settings có thể vô tình
+đọc nhầm EDGE_* từ .env thật thay vì môi trường sạch nếu không dọn trước."""
 import copy
 import os
 
@@ -21,11 +21,11 @@ def _clean_edge_env(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _restore_settings_singleton():
-    """`config.settings` la 1 singleton dung chung ca tien trinh pytest - tinh
-    nang hot-reload (config.reload_settings(), goi tu setup_post) mutate
-    THUOC TINH cua chinh object nay, nen 1 test POST /setup thanh cong se lam
-    lech settings cho MOI test chay SAU no neu khong snapshot/khoi phuc - xem
-    review 2026-09-17 (tinh nang hot-reload)."""
+    """`config.settings` là 1 singleton dùng chung cả tiến trình pytest - tính
+    năng hot-reload (config.reload_settings(), gọi từ setup_post) mutate
+    THUỘC TÍNH của chính object này, nên 1 test POST /setup thành công sẽ làm
+    lệch settings cho MỌI test chạy SAU nó nếu không snapshot/khôi phục - xem
+    review 2026-09-17 (tính năng hot-reload)."""
     original = copy.copy(_config.settings.__dict__)
     yield
     _config.settings.__dict__.clear()

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Gui lenh in (ZPL/ESC-POS) toi may in qua socket tcp:// - dung dinh dang
+"""Gửi lệnh in (ZPL/ESC-POS) tới máy in qua socket tcp:// - dùng định dạng
 pcm.print.job._as_payload() (pcm_profile.py): {id, printer, copies, kind, data, lot}.
 
-may in usb:// (cam thang vao edge) khong the goi tu Python thuan mot cach
-portable tren moi HDH - o day chi ho tro tcp:// (Zebra/EPSON co card mang,
-pho bien nhat trong xuong). usb:// duoc bao loi ro rang de nguoi van hanh biet.
+máy in usb:// (cắm thẳng vào edge) không thể gọi từ Python thuần một cách
+portable trên mọi HĐH - ở đây chỉ hỗ trợ tcp:// (Zebra/EPSON có card mạng,
+phổ biến nhất trong xưởng). usb:// được báo lỗi rõ ràng để người vận hành biết.
 """
 import asyncio
 import logging
@@ -20,15 +20,15 @@ async def send_job(payload: dict) -> dict:
     kind = payload.get("kind") or "zpl"
 
     if not target:
-        return {"ok": False, "error": "may in khong co 'target'"}
+        return {"ok": False, "error": "máy in không có 'target'"}
     if not target.startswith("tcp://"):
-        return {"ok": False, "error": "chi ho tro target tcp://host:port (nhan '%s')" % target}
+        return {"ok": False, "error": "chỉ hỗ trợ target tcp://host:port (nhận '%s')" % target}
 
     host, _, port = target[len("tcp://"):].partition(":")
     try:
         port = int(port or 9100)
     except ValueError:
-        return {"ok": False, "error": "port khong hop le trong target: %s" % target}
+        return {"ok": False, "error": "port không hợp lệ trong target: %s" % target}
 
     encoding = "latin-1" if kind == "escpos" else "utf-8"
     try:
@@ -42,5 +42,5 @@ async def send_job(payload: dict) -> dict:
             await writer.wait_closed()
         return {"ok": True, "status": "ok"}
     except Exception as exc:                                        # noqa: BLE001
-        _logger.warning("gui lenh in that bai (%s): %s", target, exc)
+        _logger.warning("gửi lệnh in thất bại (%s): %s", target, exc)
         return {"ok": False, "error": str(exc)[:200]}

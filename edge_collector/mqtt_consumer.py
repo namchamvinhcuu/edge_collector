@@ -1,57 +1,57 @@
 # -*- coding: utf-8 -*-
-"""Ben DOC cua duong MQTT: nhan so do node phat len broker.
+"""Bên ĐỌC của đường MQTT: nhận số đo node phát lên broker.
 
-Vi sao co file nay: node (component mqtt_link) da phat len
-`fms/<serial>/meas`, nhung mot topic exchange khong co ai dang ky thi broker
-VUT thong diep di. Do la trang thai truoc khi co file nay — nua duong ong.
+Vì sao có file này: node (component mqtt_link) đã phát lên
+`fms/<serial>/meas`, nhưng một topic exchange không có ai đăng ký thì broker
+VỨT thông điệp đi. Đó là trạng thái trước khi có file này — nửa đường ống.
 
-Duong di:
+Đường đi:
 
-    node --MQTT--> broker --MQTT--> file nay --> agent.push_node_reading()
+    node --MQTT--> broker --MQTT--> file này --> agent.push_node_reading()
                                                         |
-                                            (dung cua ma node_api.py dung)
+                                            (đúng của mà node_api.py dùng)
                                                         |
                                               outbox SQLite --> Odoo
 
-Dung DUNG cua vao `push_node_reading()` cua duong HTTP, nen khong co bo
-phan tich thu hai, khong co duong ghi thu hai vao outbox, va moi thu phia
-sau (chong mat mau, gom lo, gui lai khi dut mang) dung y nguyen.
+Dùng ĐÚNG của vào `push_node_reading()` của đường HTTP, nên không có bộ
+phân tích thứ hai, không có đường ghi thứ hai vào outbox, và mọi thứ phía
+sau (chống mất mẫu, gom lô, gửi lại khi đứt mạng) dùng y nguyên.
 
 
-HAI CHIEU, va tu 19/09 la duong DUY NHAT
+HAI CHIỀU, và từ 19/09 là đường DUY NHẤT
 ----------------------------------------
-Chieu len   `fms/<serial>/meas`    so do  -> push_node_reading()
-            `fms/<serial>/status`  online/Last Will, va co "cmd"
-Chieu xuong `fms/<serial>/cmd`     lenh   <- manager.queue_command()
-            `fms/<serial>/cmdack`  ket qua -> manager.node_ack_command()
+Chiều lên   `fms/<serial>/meas`    số đo  -> push_node_reading()
+            `fms/<serial>/status`  online/Last Will, và có "cmd"
+Chiều xuống `fms/<serial>/cmd`     lệnh   <- manager.queue_command()
+            `fms/<serial>/cmdack`  kết quả -> manager.node_ack_command()
 
-Node da tat `CONFIG_UPLINK_HTTP_ENABLE`, nen `/node/v1/*` khong con ai goi.
-`EDGE_MQTT_CONSUMER_FORWARD` PHAI la true — de false thi so do chay toi day
-roi dung lai, khong co duong nao khac toi Odoo.
+Node đã tắt `CONFIG_UPLINK_HTTP_ENABLE`, nên `/node/v1/*` không còn ai gọi.
+`EDGE_MQTT_CONSUMER_FORWARD` PHẢI là true — để false thì số đo chạy tới đây
+rồi dừng lại, không có đường nào khác tới Odoo.
 
-Nguoc lai cung dung: dung bat forward khi node van con phat ca hai duong,
-vi khi do Odoo nhan moi mau hai lan.
+Ngược lại cũng đúng: đừng bật forward khi node vẫn còn phát cả hai đường,
+vì khi đó Odoo nhận mỗi mẫu hai lần.
 
-Chon duong cho LENH dua tren co "cmd" node tu khai trong chu de status,
-khong dua tren cau hinh ben nay. Firmware cu khong biet nghe MQTT thi
-khong khai, va manager tu quay ve hang doi poll cho no — mot ham xom co the
-chay lan firmware ma khong phai sua gi o day.
+Chọn đường cho LỆNH dựa trên có "cmd" node tự khai trong chủ đề status,
+không dựa trên cấu hình bên này. Firmware cũ không biết nghe MQTT thì
+không khai, và manager tự quay về hàng đợi poll cho nó — một hàm xóm có thể
+chạy lẫn firmware mà không phải sửa gì ở đây.
 
-Nhip tim cung do day lo: truoc kia node tu POST /node/v1/heartbeat, cat HTTP
-la mat cai do va thiet bi se chuyen "offline" ben Odoo trong khi so do van
-chay ve deu. _heartbeat_loop() dich trang thai broker sang tieng noi ma Odoo
-dang nghe.
+Nhịp tim cũng do đây lo: trước kia node tự POST /node/v1/heartbeat, cắt HTTP
+là mất cái đó và thiết bị sẽ chuyển "offline" bên Odoo trong khi số đo vẫn
+chạy về đều. _heartbeat_loop() dịch trạng thái broker sang tiếng nói mà Odoo
+đang nghe.
 
 
-Ben bi khi consumer chet
+Bền bỉ khi consumer chết
 ------------------------
-Dung phien MQTT ben bi: `clean_session=False` + client_id co dinh + dang ky
-QoS 1. Broker giu thong diep lai cho dung client_id do trong luc no vang
-mat (RabbitMQ: `mqtt.max_session_expiry_interval_seconds`, dang dat 3600 s).
-Song lai la doc tiep tu cho dut, khong mat mau.
+Dùng phiên MQTT bền bỉ: `clean_session=False` + client_id cố định + đăng ký
+QoS 1. Broker giữ thông điệp lại cho đúng client_id đó trong lúc nó vắng
+mặt (RabbitMQ: `mqtt.max_session_expiry_interval_seconds`, đang đặt 3600 s).
+Sống lại là đọc tiếp từ chỗ đứt, không mất mẫu.
 
-Day la ly do client_id PHAI co dinh va PHAI khac nhau giua cac tien trinh:
-hai ben dung chung mot client_id se da nhau ra khoi broker lien tuc.
+Đây là lý do client_id PHẢI cố định và PHẢI khác nhau giữa các tiến trình:
+hai bên dùng chung một client_id sẽ đá nhau ra khỏi broker liên tục.
 """
 import asyncio
 import collections
@@ -67,26 +67,26 @@ from .config import settings
 
 _logger = logging.getLogger("edge.mqtt_consumer")
 
-# Gioi han mot goi — node gui toi da 50 ban ghi mot lo (CONFIG_MQTT_LINK_
-# BATCH_MAX), lay du gap boi de con cho firmware khac, nhung van chan mot
-# goi hong/ac y lam nghen vong lap.
+# Giới hạn một gói — node gửi tối đa 50 bản ghi một lô (CONFIG_MQTT_LINK_
+# BATCH_MAX), lấy dư gấp bội để còn chỗ firmware khác, nhưng vẫn chặn một
+# gói hỏng/ác ý làm nghẽn vòng lặp.
 MAX_ITEMS = 1000
 
-# Nhip nhip-tim thay mat node. Xem _heartbeat_loop().
+# Nhịp nhịp-tim thay mặt node. Xem _heartbeat_loop().
 HEARTBEAT_S = 30
 
-# Coi la dong ho chua dong bo neu truoc moc nay (2020-09). Bang dung nguong
-# EPOCH_SANE_MS cua firmware.
+# Coi là đồng hồ chưa đồng bộ nếu trước mốc này (2020-09). Bằng đúng ngưỡng
+# EPOCH_SANE_MS của firmware.
 EPOCH_SANE_S = 1600000000
 
-# So goi giu lai cho trang /ops. 300 la khoang 5 phut o nhip hien tai — du
-# de nhin thay mot lan bam nut di va ve, ma khong giu lich su trong RAM cua
-# mot tien trinh dang chay 24/7.
+# Số gói giữ lại cho trang /ops. 300 là khoảng 5 phút ở nhịp hiện tại — đủ
+# để nhìn thấy một lần bấm nút đi và về, mà không giữ lịch sử trong RAM của
+# một tiến trình đang chạy 24/7.
 TRAFFIC_MAX = 300
 
 
 class MqttConsumer:
-    """Doc `fms/<serial>/meas` va `fms/<serial>/status` tu broker."""
+    """Đọc `fms/<serial>/meas` và `fms/<serial>/status` từ broker."""
 
     def __init__(self, agent):
         self._agent = agent
@@ -95,42 +95,42 @@ class MqttConsumer:
         self._connected = False
         self.stats = {
             "connected": False,
-            "messages": 0,      # so goi MQTT nhan duoc
-            "items": 0,         # so BAN GHI so do — con so de doi chieu voi HTTP
-            "forwarded": 0,     # so ban ghi thuc su day vao outbox
-            "bad": 0,           # goi khong phan tich duoc
+            "messages": 0,      # số gói MQTT nhận được
+            "items": 0,         # số BẢN GHI số đo — con số để đối chiếu với HTTP
+            "forwarded": 0,     # số bản ghi thực sự đẩy vào outbox
+            "bad": 0,           # gói không phân tích được
             "last_ts": None,
-            "by_serial": {},    # serial -> so ban ghi
-            "online": {},       # serial -> True/False theo chu de status
-            "cmd_sent": 0,      # so lenh da day XONG xuong socket, xac nhan ngay
-            "cmd_sent_no_conn": 0,  # so lenh giao cho paho giu (rc=NO_CONN),
-                                    # cho gui lai khi reconnect - CHUA chac da
-                                    # ra khoi tien trinh nay - xem publish_command()
-            "cmd_acked": 0,     # so ack lenh nhan lai
-            "ts_dropped": 0,    # so ban ghi co dau thoi gian vo ly
-            "sig_rejected": 0,  # so goi co "sig" nhung xac minh HMAC that bai
+            "by_serial": {},    # serial -> số bản ghi
+            "online": {},       # serial -> True/False theo chủ đề status
+            "cmd_sent": 0,      # số lệnh đã đẩy XONG xuống socket, xác nhận ngay
+            "cmd_sent_no_conn": 0,  # số lệnh giao cho paho giữ (rc=NO_CONN),
+                                    # chờ gửi lại khi reconnect - CHƯA chắc đã
+                                    # ra khỏi tiến trình này - xem publish_command()
+            "cmd_acked": 0,     # số ack lệnh nhận lại
+            "ts_dropped": 0,    # số bản ghi có dấu thời gian vô lý
+            "sig_rejected": 0,  # số gói có "sig" nhưng xác minh HMAC thất bại
         }
-        # serial -> firmware co biet nhan lenh qua MQTT khong (co "cmd" trong
-        # chu de status). Khong doan: node tu khai.
+        # serial -> firmware có biết nhận lệnh qua MQTT không (có "cmd" trong
+        # chủ đề status). Không đoán: node tự khai.
         self.caps = {}
         self._hb_task = None
-        # Nhat ky goi tin cho trang /ops. Vong dem trong BO NHO, khong ghi
-        # dia: day la kinh luc, khong phai so sach. SQLite history moi la
-        # noi so lieu song.
+        # Nhật ký gói tin cho trang /ops. Vòng đệm trong BỘ NHỚ, không ghi
+        # đĩa: đây là kính lúc, không phải sổ sách. SQLite history mới là
+        # nơi số liệu sống.
         self.traffic = collections.deque(maxlen=TRAFFIC_MAX)
         self._ev_seq = 0
-        # code kenh den -> {"v": 0/1, "ts": ..., "serial": ...}
+        # code kênh đèn -> {"v": 0/1, "ts": ..., "serial": ...}
         self.lamps = {}
 
     # -- vong doi ------------------------------------------------------
     async def start(self) -> None:
         if not settings.mqtt_consumer_enabled:
-            _logger.info("tat trong cau hinh, khong chay")
+            _logger.info("tắt trong cấu hình, không chạy")
             return
         self._loop = asyncio.get_event_loop()
 
         host, port = _split_url(settings.mqtt_consumer_url)
-        # clean_session=False: xem phan "Ben bi" o dau file.
+        # clean_session=False: xem phần "Bền bỉ" ở đầu file.
         self._cli = mqtt.Client(client_id=settings.mqtt_consumer_client_id,
                                 clean_session=False)
         if settings.mqtt_consumer_user:
@@ -142,9 +142,9 @@ class MqttConsumer:
         self._cli.connect_async(host, port, keepalive=30)
         self._cli.loop_start()
         self._hb_task = self._loop.create_task(self._heartbeat_loop())
-        _logger.info("dang noi broker %s:%s, chu de %s (che do %s)",
+        _logger.info("đang nối broker %s:%s, chủ đề %s (chế độ %s)",
                      host, port, settings.mqtt_consumer_topic,
-                     "DAY VAO ODOO" if settings.mqtt_consumer_forward else "bong/chi dem")
+                     "ĐẨY VÀO ODOO" if settings.mqtt_consumer_forward else "bóng/chỉ đếm")
 
     async def stop(self) -> None:
         if self._hb_task:
@@ -155,11 +155,11 @@ class MqttConsumer:
             self._cli.disconnect()
             self._cli = None
 
-    # -- callback cua paho (chay tren THREAD RIENG) ---------------------
+    # -- callback của paho (chạy trên THREAD RIÊNG) ---------------------
     #
-    # Khong dung thang vao store/agent o day: chuyen ve vong lap asyncio
-    # bang call_soon_threadsafe, giong drivers/mqtt.py. Giu dung thu tu va
-    # khong de I/O SQLite chan vong mang cua paho.
+    # Không dùng thẳng vào store/agent ở đây: chuyển về vòng lặp asyncio
+    # bằng call_soon_threadsafe, giống drivers/mqtt.py. Giữ đúng thứ tự và
+    # không để I/O SQLite chặn vòng mạng của paho.
     def _on_connect(self, client, userdata, flags, rc):
         if rc == 0:
             client.subscribe([(settings.mqtt_consumer_topic, 1),
@@ -168,7 +168,7 @@ class MqttConsumer:
             self._loop.call_soon_threadsafe(self._set_connected, True)
         else:
             self._loop.call_soon_threadsafe(
-                self._log_error, "noi broker that bai rc=%s" % rc)
+                self._log_error, "nối broker thất bại rc=%s" % rc)
 
     def _on_disconnect(self, client, userdata, rc):
         self._loop.call_soon_threadsafe(self._set_connected, False)
@@ -176,27 +176,27 @@ class MqttConsumer:
     def _on_message(self, client, userdata, msg):
         self._loop.call_soon_threadsafe(self._handle, msg.topic, msg.payload)
 
-    # -- chay tren vong lap asyncio -------------------------------------
+    # -- chạy trên vòng lặp asyncio -------------------------------------
     def _set_connected(self, ok: bool):
         self._connected = ok
         self.stats["connected"] = ok
-        _logger.info("broker: %s", "da noi" if ok else "mat ket noi")
+        _logger.info("broker: %s", "đã nối" if ok else "mất kết nối")
 
     def _log_error(self, text: str):
         _logger.warning("%s", text)
 
     def _subscribe_status(self, serial: str) -> None:
-        """Dang ky chu de status chinh xac cua mot serial (lay anh chup retained)."""
+        """Đăng ký chủ đề status chính xác của một serial (lấy ảnh chụp retained)."""
         if not self._cli:
             return
         topic = settings.mqtt_consumer_status_topic.replace("+", serial, 1)
         if "+" in topic or "#" in topic:
-            return          # mau chu de khong co cho de thay serial vao
+            return          # mẫu chủ đề không có chỗ để thay serial vào
         try:
             self._cli.subscribe(topic, 1)
-            _logger.info("dang ky them %s", topic)
+            _logger.info("đăng ký thêm %s", topic)
         except Exception as exc:                                  # noqa: BLE001
-            _logger.warning("khong dang ky duoc %s: %s", topic, exc)
+            _logger.warning("không đăng ký được %s: %s", topic, exc)
 
     def _log_event(self, direction: str, topic: str, nbytes: int, note: str):
         self._ev_seq += 1
@@ -217,36 +217,36 @@ class MqttConsumer:
             self.stats["bad"] += 1
             return
 
-        # HMAC tuy chon: node cu (ESP32 chua nang cap) khong gui "sig", van
-        # cho qua nhu truoc gio - khong pha tuong thich nguoc. Node MOI (co
-        # api_key da hoc qua /hello) tu ky, tu do co "sig" - luc do BAT BUOC
-        # xac minh dung, sai la tu choi luon (khong co duong ha tieu chuan).
-        # Cach nay tu dong dung cho ca LWT ({"online":false} broker tu phat,
-        # khong the ky dong) vi LWT khong co "sig" - khong can biet rieng
-        # "status"/"online" o day.
+        # HMAC tùy chọn: node cũ (ESP32 chưa nâng cấp) không gửi "sig", vẫn
+        # cho qua như trước giờ - không phá tương thích ngược. Node MỚI (có
+        # api_key đã học qua /hello) tự ký, từ đó có "sig" - lúc đó BẮT BUỘC
+        # xác minh đúng, sai là từ chối luôn (không có đường hạ tiêu chuẩn).
+        # Cách này tự động đúng cho cả LWT ({"online":false} broker tự phát,
+        # không thể ký động) vì LWT không có "sig" - không cần biết riêng
+        # "status"/"online" ở đây.
         if "sig" in data:
             api_key = self._agent.manager.cached_node_api_key(serial)
             if not api_key or not _verify_sig(api_key, data):
                 self.stats["sig_rejected"] += 1
-                _logger.warning("node %s: sig sai/chua xac minh duoc tren "
-                                "chu de %s, bo qua goi", serial, kind)
+                _logger.warning("node %s: sig sai/chưa xác minh được trên "
+                                "chủ đề %s, bỏ qua gói", serial, kind)
                 return
 
         if kind == "status":
             online = bool(data.get("online"))
             self.stats["online"][serial] = online
-            # Node tu khai co nhan duoc lenh qua MQTT khong.
+            # Node tự khai có nhận được lệnh qua MQTT không.
             #
-            # KHONG xoa loi khai nay khi node rot mang: biet nghe MQTT la
-            # thuoc tinh cua FIRMWARE, con song hay chet la chuyen khac.
-            # Gop hai thu lam mot thi luc node rot, manager tuong day la
-            # firmware cu va xep lenh vao hang doi poll — ma firmware moi
-            # khong bao gio poll nua.
+            # KHÔNG xóa lời khai này khi node rớt mạng: biết nghe MQTT là
+            # thuộc tính của FIRMWARE, còn sống hay chết là chuyện khác.
+            # Gộp hai thứ làm một thì lúc node rớt, manager tưởng đây là
+            # firmware cũ và xếp lệnh vào hàng đợi poll — mà firmware mới
+            # không bao giờ poll nữa.
             if online and data.get("cmd"):
                 self.caps[serial] = True
             _logger.info("node %s: %s%s", serial,
                          "online" if online else "OFFLINE (Last Will)",
-                         ", nhan lenh qua MQTT" if self.caps.get(serial) else "")
+                         ", nhận lệnh qua MQTT" if self.caps.get(serial) else "")
             self._log_event("up", topic, len(raw),
                             "đang chạy" if online else "ĐÃ TẮT (Last Will)")
             return
@@ -257,8 +257,8 @@ class MqttConsumer:
                 self.stats["bad"] += 1
                 return
             self.stats["cmd_acked"] += 1
-            # Dung cho tra loi ma /node/v1/commands/ack van dung: future cua
-            # queue_command dang cho o day, khong co duong thu hai.
+            # Dùng cho trả lời mà /node/v1/commands/ack vẫn dùng: future của
+            # queue_command đang chờ ở đây, không có đường thứ hai.
             ok = bool(data.get("ok"))
             self._log_event("up", topic, len(raw),
                             "lệnh #%s %s%s" % (cmd_id, "OK" if ok else "TỪ CHỐI",
@@ -272,21 +272,21 @@ class MqttConsumer:
             self.stats["bad"] += 1
             return
 
-        # Lan dau thay mot serial: dang ky them chu de status CHINH XAC cua no.
+        # Lần đầu thấy một serial: đăng ký thêm chủ đề status CHÍNH XÁC của nó.
         #
-        # Vi sao phai lam the, thay vi tin vao 'fms/+/status' da dang ky o
-        # _on_connect: kho retained cua RabbitMQ KHONG phuc vu dang ky co ky
-        # tu dai dien. Do that 18/09 tren chinh broker nay:
-        #     'fms/68EE8F4F06A8/status' -> nhan duoc {"online":true}
-        #     'fms/+/status'            -> khong nhan gi
-        # Dang ky dai dien van bat duoc thay doi SONG (Last Will, lan node
-        # bao online), chi thieu anh chup retained luc minh vua khoi dong.
-        # Nen: dai dien cho su kien song + chinh xac cho anh chup.
+        # Vì sao phải làm thế, thay vì tin vào 'fms/+/status' đã đăng ký ở
+        # _on_connect: kho retained của RabbitMQ KHÔNG phục vụ đăng ký có ký
+        # tự đại diện. Đo thật 18/09 trên chính broker này:
+        #     'fms/68EE8F4F06A8/status' -> nhận được {"online":true}
+        #     'fms/+/status'            -> không nhận gì
+        # Đăng ký đại diện vẫn bắt được thay đổi SỐNG (Last Will, lần node
+        # báo online), chỉ thiếu ảnh chụp retained lúc mình vừa khởi động.
+        # Nên: đại diện cho sự kiện sống + chính xác cho ảnh chụp.
         if serial not in self.stats["by_serial"]:
             self._subscribe_status(serial)
 
-        # Cho manager biet node nay con song, y het node_api.py lam o duong
-        # HTTP — has_node_or_driver() va /api/command dua vao day.
+        # Cho manager biết node này còn sống, y hệt node_api.py làm ở đường
+        # HTTP — has_node_or_driver() và /api/command dựa vào đây.
         self._agent.manager.touch_node(serial)
 
         n = 0
@@ -298,12 +298,12 @@ class MqttConsumer:
             if not ch:
                 continue
             n += 1
-            # Dau thoi gian vo ly -> bo di, de _on_value lay gio cua edge.
+            # Dấu thời gian vô lý -> bỏ đi, để _on_value lấy giờ của edge.
             #
-            # Truoc day node hoc gio tu HAI nguon: SNTP va tra loi cua
-            # /node/v1/hello. Cat HTTP la mat nguon thu hai, nen mot mang
-            # nha may khong ra duoc pool.ntp.org se lam moi "ts" thanh nam
-            # 1970 — va no chay thang vao Odoo neu khong chan o day.
+            # Trước đây node học giờ từ HAI nguồn: SNTP và trả lời của
+            # /node/v1/hello. Cắt HTTP là mất nguồn thứ hai, nên một mạng
+            # nhà máy không ra được pool.ntp.org sẽ làm mọi "ts" thành năm
+            # 1970 — và nó chạy thẳng vào Odoo nếu không chặn ở đây.
             ts = it.get("ts")
             ts_s = (ts / 1000.0) if isinstance(ts, (int, float)) else None
             if ts_s is not None and ts_s < EPOCH_SANE_S:
@@ -312,15 +312,15 @@ class MqttConsumer:
             v = it.get("v")
             if len(preview) < 4:
                 preview.append("%s=%s" % (ch, v))
-            # Kenh den: giu rieng gia tri moi nhat cho trang /ops. Node chi
-            # bao khi co ai ghi (bao-khi-doi), nen "ts" o day la luc DOI
-            # gan nhat, khong phai luc do gan nhat.
+            # Kênh đèn: giữ riêng giá trị mới nhất cho trang /ops. Node chỉ
+            # báo khi có ai ghi (báo-khi-đổi), nên "ts" ở đây là lúc ĐỔI
+            # gần nhất, không phải lúc đo gần nhất.
             #
-            # LUON cap nhat, KHONG phu thuoc mqtt_consumer_forward: /ops phai
-            # phan anh dung trang thai vat ly ngay ca khi chua bat forward
-            # vao Odoo (xem docstring dau ops_api.py: "trang nay phai xem
-            # duoc dung luc Odoo hong") - xem python-test-writer 2026-09-24
-            # (bat qua test_handle_measurement_tracks_relay_channel_as_lamp).
+            # LUÔN cập nhật, KHÔNG phụ thuộc mqtt_consumer_forward: /ops phải
+            # phản ánh đúng trạng thái vật lý ngay cả khi chưa bật forward
+            # vào Odoo (xem docstring đầu ops_api.py: "trang này phải xem
+            # được đúng lúc Odoo hỏng") - xem python-test-writer 2026-09-24
+            # (bắt qua test_handle_measurement_tracks_relay_channel_as_lamp).
             if str(ch).startswith("relay"):
                 self.lamps[ch] = {"v": v, "ts": ts_s or time.time(),
                                   "serial": serial}
@@ -339,22 +339,22 @@ class MqttConsumer:
         self.stats["last_ts"] = time.time()
         self.stats["by_serial"][serial] = self.stats["by_serial"].get(serial, 0) + n
 
-    # -- chieu xuong: day lenh toi node ----------------------------------
+    # -- chiều xuống: đẩy lệnh tới node ----------------------------------
     def publish_command(self, serial: str, payload: dict) -> bool:
-        """Day mot lenh xuong <goc>/<serial>/cmd. Tra False neu khong gui
-        duoc — khi do manager quay ve hang doi poll cua duong HTTP.
+        """Đẩy một lệnh xuống <gốc>/<serial>/cmd. Trả False nếu không gửi
+        được — khi đó manager quay về hàng đợi poll của đường HTTP.
 
-        QoS 1, KHONG retain: mot lenh bat den gui luc node mat dien khong
-        duoc phep tu bat len khi no song lai nua tieng sau. Broker vut di
-        lenh gui cho mot node vang mat, dung nhu ta muon."""
+        QoS 1, KHÔNG retain: một lệnh bật đèn gửi lúc node mất điện không
+        được phép tự bật lên khi nó sống lại nửa tiếng sau. Broker vứt đi
+        lệnh gửi cho một node vắng mặt, đúng như ta muốn."""
         if not (self._cli and self._connected):
             return False
         if not self.caps.get(serial):
-            return False        # node chua khai la nhan duoc lenh qua MQTT
+            return False        # node chưa khai là nhận được lệnh qua MQTT
         if not self.stats["online"].get(serial):
-            # Chu de lenh khong retain va node khong dung phien ben, nen goi
-            # gui cho mot node vang mat bi broker vut di. Tra False de ben
-            # goi bao loi that, thay vi bao "da gui" roi im lang.
+            # Chủ đề lệnh không retain và node không dùng phiên bền, nên gói
+            # gửi cho một node vắng mặt bị broker vứt đi. Trả False để bên
+            # gọi báo lỗi thật, thay vì báo "đã gửi" rồi im lặng.
             return False
         topic = _cmd_topic(serial)
         if topic is None:
@@ -362,28 +362,28 @@ class MqttConsumer:
         try:
             info = self._cli.publish(topic, json.dumps(payload), qos=1)
         except Exception as exc:                                  # noqa: BLE001
-            _logger.warning("khong day duoc lenh toi %s: %s", topic, exc)
+            _logger.warning("không đẩy được lệnh tới %s: %s", topic, exc)
             return False
         if info.rc == mqtt.MQTT_ERR_NO_CONN:
-            # KHONG chac chan la chua gui - day la 1 khe hep giua self._connected
-            # (co do tre qua call_soon_threadsafe) va socket that cua paho: neu
-            # socket vua rot dung luc goi publish(), paho._send_publish() tra ve
-            # NO_CONN nhung (da doc source paho-mqtt that, khong doan) van GIU
-            # message trong self._out_messages (state=mqtt_ms_publish) va TU
-            # DONG republish khi reconnect thanh cong - khac han cac rc loi khac
-            # (that su khong gui duoc). Tra True o day de manager.queue_command()
-            # tiep tuc cho ACK that (co the toi tu paho tu gui lai sau) thay vi
-            # bao "chac chan that bai" ngay - neu ACK khong toi kip timeout, vong
-            # do da tu tra "status":"unknown" (khop dung y nghia "co the da chay
-            # nhung chua xac nhan duoc") - xem review 2026-09-24 (finding tu vong
-            # phoi hop queue-command-unknown-timeout).
+            # KHÔNG chắc chắn là chưa gửi - đây là 1 khe hẹp giữa self._connected
+            # (có độ trễ qua call_soon_threadsafe) và socket thật của paho: nếu
+            # socket vừa rớt đúng lúc gọi publish(), paho._send_publish() trả về
+            # NO_CONN nhưng (đã đọc source paho-mqtt thật, không đoán) vẫn GIỮ
+            # message trong self._out_messages (state=mqtt_ms_publish) và TỰ
+            # ĐỘNG republish khi reconnect thành công - khác hẳn các rc lỗi khác
+            # (thật sự không gửi được). Trả True ở đây để manager.queue_command()
+            # tiếp tục chờ ACK thật (có thể tới từ paho tự gửi lại sau) thay vì
+            # báo "chắc chắn thất bại" ngay - nếu ACK không tới kịp timeout, vòng
+            # đó đã tự trả "status":"unknown" (khớp đúng ý nghĩa "có thể đã chạy
+            # nhưng chưa xác nhận được") - xem review 2026-09-24 (finding từ vòng
+            # phối hợp queue-command-unknown-timeout).
             #
-            # Dem rieng "cmd_sent_no_conn", KHONG dem chung vao "cmd_sent" -
-            # review 2026-09-24 (fix-mqtt-no-conn-race) chi ra gop chung se lam
-            # "Lenh gui" o /ops trong nhu da gui het du mot phan dang cho paho
-            # gui lai, de gay hieu lam luc mang site chap chon.
-            _logger.info("day lenh toi %s: NO_CONN, paho se tu gui lai khi "
-                        "reconnect - coi nhu da giao, cho ACK that", topic)
+            # Đếm riêng "cmd_sent_no_conn", KHÔNG đếm chung vào "cmd_sent" -
+            # review 2026-09-24 (fix-mqtt-no-conn-race) chỉ ra gộp chung sẽ làm
+            # "Lệnh gửi" ở /ops trông như đã gửi hết dù một phần đang chờ paho
+            # gửi lại, dễ gây hiểu lầm lúc mạng site chập chờn.
+            _logger.info("đẩy lệnh tới %s: NO_CONN, paho sẽ tự gửi lại khi "
+                        "reconnect - coi như đã giao, chờ ACK thật", topic)
             self.stats["cmd_sent_no_conn"] += 1
             self._log_event("down", topic, len(json.dumps(payload)),
                             "lệnh #%s %s %s=%s (cho gui lai, mat ket noi tam thoi)" %
@@ -391,7 +391,7 @@ class MqttConsumer:
                              payload.get("channel"), payload.get("value")))
             return True
         if info.rc != mqtt.MQTT_ERR_SUCCESS:
-            _logger.warning("day lenh toi %s that bai rc=%s", topic, info.rc)
+            _logger.warning("đẩy lệnh tới %s thất bại rc=%s", topic, info.rc)
             return False
         self.stats["cmd_sent"] += 1
         self._log_event("down", topic, len(json.dumps(payload)),
@@ -399,18 +399,18 @@ class MqttConsumer:
                                                payload.get("channel"), payload.get("value")))
         return True
 
-    # -- nhip tim thay mat node ------------------------------------------
+    # -- nhịp tim thay mặt node ------------------------------------------
     async def _heartbeat_loop(self):
-        """Bao Odoo rang node con song.
+        """Báo Odoo rằng node còn sống.
 
-        Truoc kia chinh node POST /node/v1/heartbeat moi 30 giay. Cat HTTP
-        la mat cai do, va thiet bi se chuyen sang "offline" ben Odoo trong
-        khi so do van chay ve deu — mot cai den bao noi doi.
+        Trước kia chính node POST /node/v1/heartbeat mỗi 30 giây. Cắt HTTP
+        là mất cái đó, và thiết bị sẽ chuyển sang "offline" bên Odoo trong
+        khi số đo vẫn chạy về đều — một cái đèn báo nói dối.
 
-        Nguon su that moi la broker: "online" o day den tu chu de status
-        (retained) va tu Last Will, tuc la broker TU bao khi node rot chu
-        khong phai doi het gio mot bo dem. Vong nay chi dich dieu do sang
-        tieng noi ma Odoo dang nghe."""
+        Nguồn sự thật mới là broker: "online" ở đây đến từ chủ đề status
+        (retained) và từ Last Will, tức là broker TỰ báo khi node rớt chứ
+        không phải đợi hết giờ một bộ đếm. Vòng này chỉ dịch điều đó sang
+        tiếng nói mà Odoo đang nghe."""
         while True:
             try:
                 await asyncio.sleep(HEARTBEAT_S)
@@ -424,12 +424,12 @@ class MqttConsumer:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:                              # noqa: BLE001
-                _logger.warning("nhip tim that bai: %s", exc)
+                _logger.warning("nhịp tim thất bại: %s", exc)
 
 
 def _topic_sibling(last: str):
-    """'fms/+/meas' -> 'fms/+/<last>'. Suy ra tu mau da cau hinh, de khong
-    phai them mot bien .env moi cho tung chu de."""
+    """'fms/+/meas' -> 'fms/+/<last>'. Suy ra từ mẫu đã cấu hình, để không
+    phải thêm một biến .env mới cho từng chủ đề."""
     parts = (settings.mqtt_consumer_topic or "").split("/")
     if len(parts) < 3:
         return None
@@ -449,8 +449,8 @@ def _cmd_topic(serial: str):
 
 
 def _canonical(payload: dict) -> bytes:
-    """JSON dang chinh tac (sorted keys, khong khoang trang) de ky/xac minh -
-    PHAI khop byte-for-byte voi ben ky (mqtt_uplink.py cua node_agent)."""
+    """JSON dạng chính tắc (sorted keys, không khoảng trắng) để ký/xác minh -
+    PHẢI khớp byte-for-byte với bên ký (mqtt_uplink.py của node_agent)."""
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
 
 
@@ -459,8 +459,8 @@ def _sign(api_key: str, payload: dict) -> str:
 
 
 def _verify_sig(api_key: str, data: dict) -> bool:
-    """So sanh HMAC cua data (tru field "sig") voi "sig" dinh kem. Dung
-    hmac.compare_digest de tranh timing attack."""
+    """So sánh HMAC của data (trừ field "sig") với "sig" đính kèm. Dùng
+    hmac.compare_digest để tránh timing attack."""
     sig = data.get("sig")
     if not isinstance(sig, str):
         return False

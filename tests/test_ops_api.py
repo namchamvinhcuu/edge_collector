@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Test edge_collector/ops_api.py (MOI, patch MQTT merge tu production) -
-trang /ops ('Đèn & gói tin') dung chung EDGE_SETUP_TOKEN gate voi /setup
-(settings_api._check_setup_auth) va doc THANG tu app.state.agent.mqtt_consumer
-trong bo nho, khong qua Odoo/SQLite - xem docstring dau file."""
+"""Test edge_collector/ops_api.py (MỚI, patch MQTT merge từ production) -
+trang /ops ('Đèn & gói tin') dùng chung EDGE_SETUP_TOKEN gate với /setup
+(settings_api._check_setup_auth) và đọc THẲNG từ app.state.agent.mqtt_consumer
+trong bộ nhớ, không qua Odoo/SQLite - xem docstring đầu file."""
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -84,7 +84,7 @@ def test_ops_api_state_filters_events_by_since_cursor():
 
     assert resp.status_code == 200
     body = resp.json()
-    # Chi con goi tin co seq > 1 (goi seq=1 da duoc client thay tu lan poll truoc).
+    # Chỉ còn gói tin có seq > 1 (gói seq=1 đã được client thấy từ lần poll trước).
     assert len(body["events"]) == 1
     assert body["events"][0]["seq"] == 2
 
@@ -101,8 +101,8 @@ def test_ops_api_state_requires_basic_auth_when_setup_token_set():
 
 
 def test_ops_api_state_cursor_falls_back_to_since_when_no_traffic():
-    """Consumer chua co goi tin nao (deque rong) - cursor phai tra lai dung
-    gia tri 'since' da nhan, khong duoc crash tren traffic[-1] rong."""
+    """Consumer chưa có gói tin nào (deque rỗng) - cursor phải trả lại đúng
+    giá trị 'since' đã nhận, không được crash trên traffic[-1] rỗng."""
     class _EmptyConsumer(_FakeConsumer):
         def __init__(self):
             super().__init__()

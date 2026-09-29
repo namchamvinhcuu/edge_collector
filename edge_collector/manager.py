@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
-"""SourceManager — nap 'config' tra ve tu GET/POST /pcm/api/v1/edge/config
-(edge_config() ben pcm_edge.py) thanh cac driver dang chay, dinh tuyen lenh/
-browse/status theo dung kenh, va bao gia tri moi ve cho scheduler ghi so +
-day len Odoo.
+"""SourceManager — nạp 'config' trả về từ GET/POST /pcm/api/v1/edge/config
+(edge_config() bên pcm_edge.py) thành các driver đang chạy, định tuyến lệnh/
+browse/status theo đúng kênh, và báo giá trị mới về cho scheduler ghi sổ +
+đẩy lên Odoo.
 
-Chi RESTART driver cua nguon nao co config_rev doi (moi nguon mang config_rev
-rieng trong _as_config) — sua mot nguon khong lam gian doan cac nguon khac.
+Chỉ RESTART driver của nguồn nào có config_rev đổi (mỗi nguồn mang config_rev
+riêng trong _as_config) — sửa một nguồn không làm gián đoạn các nguồn khác.
 
-Ngoai driver theo pcm.source, SourceManager con giu hang doi lenh cho NODE
-day HTTP truc tiep (kind=http_node — Pi/PC bridge, xem node_api.py): node
-khong the bi goi nguoc (chi outbound), nen lenh tu Odoo duoc XEP HANG cho
-node tu POLL lay, ket qua duoc ACK ve va tra loi lai cho /api/command dang
-cho (queue_command / node_pull_command / node_ack_command).
+Ngoài driver theo pcm.source, SourceManager còn giữ hàng đợi lệnh cho NODE
+đẩy HTTP trực tiếp (kind=http_node — Pi/PC bridge, xem node_api.py): node
+không thể bị gọi ngược (chỉ outbound), nên lệnh từ Odoo được XẾP HÀNG cho
+node tự POLL lấy, kết quả được ACK về và trả lời lại cho /api/command đang
+chờ (queue_command / node_pull_command / node_ack_command).
 """
 import asyncio
 import logging
@@ -43,9 +43,9 @@ class SourceManager:
         self._source_rev: dict[str, int] = {}
         self._route: dict[tuple, str] = {}          # (serial, ch) -> source code
         # (serial, ch) -> {"max_age_ms": int|None, "must_send_every": bool}. Odoo
-        # tinh must_send_every = raw_forward or write_mode=='add' or bool(trigger_ids)
-        # (contract chot 2026-09-29 voi pcm_base) - thieu field/khong ro -> mac dinh
-        # True (an toan, giu hanh vi gui-moi-lan cu) o channel_meta_for() ben duoi.
+        # tính must_send_every = raw_forward or write_mode=='add' or bool(trigger_ids)
+        # (contract chốt 2026-09-29 với pcm_base) - thiếu field/không rõ -> mặc định
+        # True (an toàn, giữ hành vi gửi-mỗi-lần cũ) ở channel_meta_for() bên dưới.
         self._channel_meta: dict[tuple, dict] = {}
 
         self._node_last_seen: dict[str, float] = {}
@@ -61,8 +61,8 @@ class SourceManager:
         return self.devices_by_serial.get(serial) or {}
 
     def channel_meta_for(self, serial: str, ch_code: str) -> dict:
-        """max_age_ms/must_send_every cho 1 channel - dung o EdgeAgent._on_value()
-        de quyet dinh co loc-trung/heartbeat duoc khong (xem _channel_meta)."""
+        """max_age_ms/must_send_every cho 1 channel - dùng ở EdgeAgent._on_value()
+        để quyết định có lọc-trùng/heartbeat được không (xem _channel_meta)."""
         return self._channel_meta.get((serial, ch_code)) or {
             "max_age_ms": None, "must_send_every": True,
         }
@@ -102,9 +102,9 @@ class SourceManager:
                 if src_code:
                     channels_by_source.setdefault(src_code, []).append(ch)
                     route[(dev["serial"], ch["code"])] = src_code
-                # Chuan hoa None -> True O DAY (khong phai o noi doc): .get(key, True)
-                # chi ap default khi key VANG MAT, con key co mat voi value None (vd
-                # Odoo serialize JSON null) se lot qua thanh None (falsy) - danger that
+                # Chuẩn hóa None -> True Ở ĐÂY (không phải ở nơi đọc): .get(key, True)
+                # chỉ áp default khi key VẮNG MẶT, còn key có mặt với value None (vd
+                # Odoo serialize JSON null) sẽ lọt qua thành None (falsy) - nguy hiểm thật
                 # cho channel counter/trigger/raw-forward - xem finding python-reviewer
                 # 2026-09-29.
                 me = ch.get("must_send_every")
@@ -132,9 +132,9 @@ class SourceManager:
                 await drv.start()
                 self._drivers[code] = drv
                 self._source_rev[code] = rev
-                _logger.info("nguon %s (%s) da khoi dong, rev=%s", code, src_cfg.get("kind"), rev)
+                _logger.info("nguồn %s (%s) đã khởi động, rev=%s", code, src_cfg.get("kind"), rev)
             except Exception as exc:                                # noqa: BLE001
-                _logger.warning("nguon %s khoi dong that bai: %s", code, exc)
+                _logger.warning("nguồn %s khởi động thất bại: %s", code, exc)
 
     async def _stop_source(self, code: str) -> None:
         drv = self._drivers.pop(code, None)
@@ -146,8 +146,8 @@ class SourceManager:
                 pass
 
     def build_probe(self, src_cfg: dict) -> SourceDriver:
-        """Driver dung mot lan cho pcm.source.action_test() — khong dang ky
-        vao self._drivers, khong anh huong toi thu thap dang chay."""
+        """Driver dùng một lần cho pcm.source.action_test() — không đăng ký
+        vào self._drivers, không ảnh hưởng tới thu thập đang chạy."""
         return self._build(src_cfg, [])
 
     def _build(self, src_cfg: dict, channels: list) -> SourceDriver:
@@ -168,18 +168,18 @@ class SourceManager:
         if kind == "serial":
             profile = self.profiles_by_code.get(src_cfg.get("profile"))
             return SerialDriver(src_cfg, channels, emit, profile)
-        raise ValueError("khong ho tro kind=%s" % kind)
+        raise ValueError("không hỗ trợ kind=%s" % kind)
 
     async def shutdown(self) -> None:
         for code in list(self._drivers):
             await self._stop_source(code)
 
     # ------------------------------------------------------------------
-    # Node http (Pi/PC bridge) — node.py trong node_api.py goi vao day.
+    # Node http (Pi/PC bridge) — node.py trong node_api.py gọi vào đây.
     # ------------------------------------------------------------------
     def cached_node_api_key(self, serial: str) -> Optional[str]:
-        """Khoa Odoo da cap cho thiet bi nay (device._as_config()['api_key']),
-        neu edge da tung keo config va biet ve serial nay."""
+        """Khóa Odoo đã cấp cho thiết bị này (device._as_config()['api_key']),
+        nếu edge đã từng kéo config và biết về serial này."""
         dev = self.devices_by_serial.get(serial)
         return (dev or {}).get("api_key") or None
 
@@ -194,8 +194,8 @@ class SourceManager:
 
     async def queue_command(self, serial: str, ch: str, cmd: str, value,
                             timeout: float = 8.0, extra: Optional[dict] = None) -> dict:
-        """Xep mot lenh cho NODE (khong co driver dieu khien duoc — vd http_node),
-        cho node tu poll roi ack. Dung khi driver_for_channel() tra ve None."""
+        """Xếp một lệnh cho NODE (không có driver điều khiển được — vd http_node),
+        cho node tự poll rồi ack. Dùng khi driver_for_channel() trả về None."""
         self._node_cmd_seq += 1
         cmd_id = self._node_cmd_seq
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
@@ -204,48 +204,48 @@ class SourceManager:
         if extra:
             payload.update(extra)
 
-        # Duong MQTT truoc, hang doi poll lam du phong.
+        # Đường MQTT trước, hàng đợi poll làm dự phòng.
         #
-        # Khac biet khong nho: hang doi poll bat node tu di hoi moi 2 giay,
-        # nen do tre trung binh cua mot lan bam den la ~1,1 giay CHI de biet
-        # rang co lenh. MQTT day thang xuong.
+        # Khác biệt không nhỏ: hàng đợi poll bắt node tự đi hỏi mỗi 2 giây,
+        # nên độ trễ trung bình của một lần bấm đến là ~1,1 giây CHỈ để biết
+        # rằng có lệnh. MQTT đẩy thẳng xuống.
         #
-        # Chon duong dua tren co "cmd" node tu bao trong <goc>/<serial>/status
-        # chu khong dua tren cau hinh ben nay: firmware cu khong biet nghe
-        # MQTT van phai duoc phuc vu bang hang doi, va no tu noi dieu do.
+        # Chọn đường dựa trên cờ "cmd" node tự báo trong <gốc>/<serial>/status
+        # chứ không dựa trên cấu hình bên này: firmware cũ không biết nghe
+        # MQTT vẫn phải được phục vụ bằng hàng đợi, và nó tự nói điều đó.
         mq = getattr(self, "mqtt_cmd", None)
         if mq is not None and mq.publish_command(serial, payload):
             pass
         elif mq is not None and mq.caps.get(serial):
-            # Firmware nay noi MQTT nhung gui khong duoc (node rot, hoac mat
-            # broker). KHONG duoc xep vao hang doi poll: firmware da tat HTTP
-            # nen khong con ai goi /node/v1/commands de lay ra — lenh se nam
-            # do mai mai, vua ro ri bo nho vua bao sai nguyen nhan cho nguoi
-            # bam nut. Bao that luon.
+            # Firmware này nói MQTT nhưng gửi không được (node rớt, hoặc mất
+            # broker). KHÔNG được xếp vào hàng đợi poll: firmware đã tắt HTTP
+            # nên không còn ai gọi /node/v1/commands để lấy ra — lệnh sẽ nằm
+            # đó mãi mãi, vừa rò rỉ bộ nhớ vừa báo sai nguyên nhân cho người
+            # bấm nút. Báo thật luôn.
             self._node_futures.pop(cmd_id, None)
             return {"ok": False,
-                    "error": "node %s dang khong ket noi toi broker" % serial}
+                    "error": "node %s đang không kết nối tới broker" % serial}
         else:
-            # Firmware cu, van tu poll /node/v1/commands.
+            # Firmware cũ, vẫn tự poll /node/v1/commands.
             self._node_queues.setdefault(serial, asyncio.Queue()).put_nowait(payload)
         try:
             return await asyncio.wait_for(fut, timeout=timeout)
         except asyncio.TimeoutError:
-            # KHONG the phan biet "lenh that su khong chay duoc" voi "da chay
-            # nhung ACK bi mat mang" - node_ack_command() khong bao gio duoc
-            # goi thi future o day chi biet no cho qua lau, khong biet ket
-            # qua that su la gi. "ok": False giu NGUYEN de tuong thich nguoc.
+            # KHÔNG thể phân biệt "lệnh thật sự không chạy được" với "đã chạy
+            # nhưng ACK bị mất mạng" - node_ack_command() không bao giờ được
+            # gọi thì future ở đây chỉ biết nó chờ quá lâu, không biết kết
+            # quả thật sự là gì. "ok": False giữ NGUYÊN để tương thích ngược.
             #
-            # "status": "unknown" dung LAI field "status" da co san (node_ack_
-            # command() dat "ok"/"error", da duoc pcm_base whitelist xuyen qua
-            # api_iot.py/pod_screen's api.py toi frontend Tags.tsx san - phoi
-            # hop 2026-09-24 voi session Odoo: gia tri thu 3 nay khong can sua
-            # gi them phia Odoo, Tags.tsx tu hien thi dung chuoi status/error
-            # thay vi "That bai" cung, tranh nguoi van hanh bam lai lenh da
-            # chay xong that.
+            # "status": "unknown" dùng LẠI field "status" đã có sẵn (node_ack_
+            # command() đặt "ok"/"error", đã được pcm_base whitelist xuyên qua
+            # api_iot.py/pod_screen's api.py tới frontend Tags.tsx sẵn - phối
+            # hợp 2026-09-24 với session Odoo: giá trị thứ 3 này không cần sửa
+            # gì thêm phía Odoo, Tags.tsx tự hiển thị đúng chuỗi status/error
+            # thay vì "Thất bại" cứng, tránh người vận hành bấm lại lệnh đã
+            # chạy xong thật.
             return {"ok": False, "status": "unknown",
-                    "error": "node khong tra loi trong %.0fs - co the da thuc thi "
-                             "nhung mat ACK" % timeout}
+                    "error": "node không trả lời trong %.0fs - có thể đã thực thi "
+                             "nhưng mất ACK" % timeout}
         finally:
             self._node_futures.pop(cmd_id, None)
 

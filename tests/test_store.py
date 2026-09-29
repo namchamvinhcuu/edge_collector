@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Test Store (edge_collector/store.py) - hien chi cover history_recent()
-(nguon du lieu panel 'Live activity' o /setup, xem settings_api.py va review
-2026-09-17). Cac method khac (outbox/kv/seq/history_latest/history_stats)
-chua co test rieng - ngoai scope task nay, xem 'Scope da KHONG cover'."""
+"""Test Store (edge_collector/store.py) - hiện chỉ cover history_recent()
+(nguồn dữ liệu panel 'Live activity' ở /setup, xem settings_api.py và review
+2026-09-17). Các method khác (outbox/kv/seq/history_latest/history_stats)
+chưa có test riêng - ngoài scope task này, xem 'Scope đã KHÔNG cover'."""
 from edge_collector.store import Store
 
 
