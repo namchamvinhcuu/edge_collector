@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Edge-IoT Technical Reference</title>
+<style>
+  :root{
+    --ink:#0d1117; --ink-soft:#3d4451; --paper:#ffffff; --paper-soft:#f6f8fa;
+    --line:#d0d7de; --accent:#0969da; --accent-soft:#ddf4ff;
+    --ok:#1a7f37; --ok-soft:#dafbe1;
+    --warn:#9a6700; --warn-soft:#fff8c5;
+    --danger:#cf222e; --danger-soft:#ffebe9;
+    --code-bg:#0d1117; --code-ink:#e6edf3; --code-key:#79c0ff; --code-str:#a5d6ff; --code-com:#8b949e;
+    --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--paper-soft);color:var(--ink);font-family:var(--sans);line-height:1.55;font-size:14.5px;}
+  .page{max-width:980px;margin:0 auto;background:var(--paper);box-shadow:0 0 0 1px var(--line);padding-bottom:60px;}
+  .cover{padding:44px 48px 30px 48px;border-bottom:3px solid var(--accent);background:linear-gradient(180deg,var(--accent-soft) 0%,var(--paper) 100%);}
+  .cover .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:var(--accent);margin:0 0 12px 0;}
+  .cover h1{font-size:28px;margin:0 0 8px 0;}
+  .cover .subtitle{color:var(--ink-soft);margin:0 0 20px 0;max-width:720px;}
+  .cover .meta{display:flex;flex-wrap:wrap;gap:24px;font-size:12.5px;color:var(--ink-soft);border-top:1px solid var(--line);padding-top:14px;font-family:var(--mono);}
+  .toc{padding:22px 48px;background:var(--paper-soft);border-bottom:1px solid var(--line);}
+  .toc h2{font-size:11.5px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink-soft);margin:0 0 10px 0;}
+  .toc ol{columns:2;column-gap:32px;margin:0;padding-left:18px;font-size:13.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  .toc a:hover{text-decoration:underline;}
+  section{padding:34px 48px 6px 48px;}
+  section+section{border-top:1px solid var(--line);}
+  .section-num{font-family:var(--mono);color:var(--accent);font-size:12px;}
+  h2{font-size:21px;margin:2px 0 14px 0;}
+  h3{font-size:15px;margin:24px 0 8px 0;border-left:3px solid var(--accent);padding-left:9px;}
+  h4{font-size:13.5px;margin:16px 0 6px 0;color:var(--ink-soft);text-transform:uppercase;letter-spacing:0.03em;}
+  p{color:var(--ink-soft);margin:0 0 12px 0;}
+  strong{color:var(--ink);}
+  ul,ol{color:var(--ink-soft);padding-left:20px;}
+  li{margin-bottom:5px;}
+  code{font-family:var(--mono);background:var(--paper-soft);border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:0.9em;color:#953800;}
+  a{color:var(--accent);}
+  pre{
+    background:var(--code-bg);color:var(--code-ink);border-radius:8px;padding:14px 16px;
+    overflow-x:auto;font-family:var(--mono);font-size:12.8px;line-height:1.55;margin:12px 0;
+  }
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:1em;}
+  .kw{color:var(--code-key);} .str{color:var(--code-str);} .com{color:var(--code-com);}
+  .file-anchor{
+    display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px;
+    background:var(--paper-soft);border:1px solid var(--line);border-radius:5px;padding:2px 8px;
+    color:var(--ink);
+  }
+  .badge{display:inline-block;padding:1px 8px;border-radius:99px;font-size:10.5px;font-weight:700;letter-spacing:0.02em;font-family:var(--mono);text-transform:uppercase;}
+  .badge.verified{background:var(--ok-soft);color:#0f5323;}
+  .badge.reported{background:var(--warn-soft);color:#6b4c00;}
+  .badge.open{background:var(--danger-soft);color:#82071e;}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13px;}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top;}
+  th{background:var(--paper-soft);font-size:11px;text-transform:uppercase;letter-spacing:0.03em;}
+  td code{white-space:nowrap;}
+  .callout{border-radius:7px;padding:12px 15px;margin:14px 0;font-size:13.5px;display:flex;gap:12px;}
+  .callout .tag{font-family:var(--mono);font-size:10.5px;text-transform:uppercase;font-weight:700;flex:none;}
+  .callout.ok{background:var(--ok-soft);color:#0f5323;} .callout.ok .tag{color:var(--ok);}
+  .callout.warn{background:var(--warn-soft);color:#6b4c00;} .callout.warn .tag{color:var(--warn);}
+  .callout.open{background:var(--danger-soft);color:#82071e;} .callout.open .tag{color:var(--danger);}
+  .repo-card{border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:14px 0;}
+  .repo-card h4{margin-top:0;display:flex;align-items:center;justify-content:space-between;}
+  .checklist{list-style:none;padding-left:0;}
+  .checklist li{padding-left:24px;position:relative;}
+  .checklist li::before{content:"\2610";position:absolute;left:0;font-family:var(--mono);color:var(--ink-soft);}
+  .checklist li.done::before{content:"\2611";color:var(--ok);}
+  footer{padding:26px 48px 0 48px;font-size:12px;color:var(--ink-soft);}
+  @media (max-width:720px){.cover,.toc,section,footer{padding-left:20px;padding-right:20px;} .toc ol{columns:1;}}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="cover">
+    <p class="eyebrow">Internal — Technical Reference for Dev / Claude Code</p>
+    <h1>Edge-IoT Pipeline — Tham chiếu kỹ thuật đầy đủ</h1>
+    <p class="subtitle">Đủ chi tiết để một dev mới hoặc 1 phiên Claude Code mới đọc và LÀM TIẾP ngay — không cần khảo sát lại từ đầu. Bao gồm: vị trí code chính xác (grep-verify được), contract giữa 3 project, trạng thái done/open, và việc cần làm tiếp theo có sẵn spec.</p>
+    <div class="meta">
+      <div>task-slug: <code>cross-session-load-optimization-2026-09-29</code> + <code>edge-429-backoff-2026-09-29</code> + <code>edge-dedup-heartbeat-2026-09-29</code></div>
+      <div>Ngày: 2026-09-29 (cập nhật lần 2 — cùng ngày, sau incident production PI-LINE1)</div>
+      <div>3 project: edge_collector · node_agent · pcm_base (Odoo)</div>
+    </div>
+  </div>
+
+  <div class="toc">
+    <h2>Mục lục</h2>
+    <ol>
+      <li><a href="#quy-uoc">Quy ước đọc tài liệu này</a></li>
+      <li><a href="#ban-do">Bản đồ 3 repo + vault</a></li>
+      <li><a href="#luong-du-lieu">Luồng dữ liệu — file:line chi tiết</a></li>
+      <li><a href="#contract-hmac">Contract — HMAC verify (MQTT)</a></li>
+      <li><a href="#contract-429">Contract — 429 + backoff</a></li>
+      <li><a href="#contract-idempotency">Contract — Idempotency (bid/seq)</a></li>
+      <li><a href="#contract-deadletter">Contract — Dead-letter (pcm_base)</a></li>
+      <li><a href="#incident-domino">Incident — SerializationFailure domino (data-loss, đã fix)</a></li>
+      <li><a href="#contract-dedup">Contract — Change-detection + heartbeat (<code>must_send_every</code>/<code>max_age_ms</code>)</a></li>
+      <li><a href="#incident-configrev">Incident — <code>config_rev</code> không ổn định (đã fix)</a></li>
+      <li><a href="#trang-thai">Bảng trạng thái done/open</a></li>
+      <li><a href="#viec-con-mo">Việc còn mở — có sẵn spec để làm ngay</a></li>
+      <li><a href="#gotcha">Gotchas / Invariants — đừng phá</a></li>
+      <li><a href="#lenh">Lệnh hay dùng</a></li>
+    </ol>
+  </div>
+
+  <!-- 1 -->
+  <section id="quy-uoc">
+    <p class="section-num">01</p>
+    <h2>Quy ước đọc tài liệu này</h2>
+    <p>Mỗi thông tin gắn 1 trong 3 badge:</p>
+    <ul>
+      <li><span class="badge verified">verified</span> — grep/đọc trực tiếp trong repo <code>edge_collector</code> (repo hiện tại), chính xác tại thời điểm viết. Line number là <code>≈</code> theo convention Code-Map — grep lại tên symbol nếu code đã đổi.</li>
+      <li><span class="badge reported">reported</span> — thông tin do session Claude Code khác (<code>node-agent-86</code>, <code>pcmppdpod-odoo-78</code>) báo cáo qua <code>SendMessage</code>, KHÔNG tự grep-verify được từ repo này (repo khác, không nằm trong working directory). Tin cậy cao (đã qua test+review bên đó) nhưng là <strong>second-hand</strong> — nếu cần chắc chắn 100%, mở repo đó xác nhận lại.</li>
+      <li><span class="badge open">open</span> — việc CHƯA làm, có spec rõ hoặc cần thiết kế thêm.</li>
+    </ul>
+    <div class="callout warn">
+      <span class="tag">Lưu ý tên session</span>
+      <div>Tên session (<code>node-agent-86</code>, <code>pcmppdpod-odoo-78</code>) đổi mỗi lần mở phiên mới (hậu tố số ngẫu nhiên) — dùng <code>ListAgents</code> để tìm tên hiện tại thay vì hard-code tên cũ trong tài liệu này.</div>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section id="ban-do">
+    <p class="section-num">02</p>
+    <h2>Bản đồ 3 repo + vault</h2>
+
+    <div class="repo-card">
+      <h4>edge_collector <span class="badge verified">repo hiện tại</span></h4>
+      <p>FastAPI edge-server, Python 3.12, chạy tại site khách hàng. Venv: <code>venv_linux/bin/python</code>. Vault: <code>.obsidian-vault/</code> (symlink → <code>projects-vault/Odoo-IoT/Edge-Collector/</code>).</p>
+      <p>File chính: <code>mqtt_consumer.py</code> (MQTT ingress), <code>node_api.py</code> (HTTP ingress từ node_agent), <code>scheduler.py</code> (outbox/sender/backoff), <code>odoo_client.py</code> (HTTP client → Odoo), <code>manager.py</code> (SourceManager — driver lifecycle + auth cache), <code>store.py</code> (SQLite outbox).</p>
+    </div>
+
+    <div class="repo-card">
+      <h4>node_agent <span class="badge reported">repo khác</span></h4>
+      <p>Bridge chạy trên Pi/PC tại site — cầu nối giữa sensor/PLC vật lý (Modbus/Serial/reader) và edge_collector. Vault riêng: <code>Plan/mqtt-uplink-node-agent.md</code>, Fix-History riêng.</p>
+      <p>File được nhắc tới (chưa tự đọc): <code>agent.py</code> (<code>_flush_loop</code>/<code>_sender_loop</code>/<code>_flush_kick</code>/<code>_sender_kick</code>), <code>mqtt_uplink.py</code> (HMAC sign), <code>config.py</code> (<code>NODE_SUBMIT_INTERVAL_S</code>, <code>NODE_HEARTBEAT_INTERVAL_S</code>).</p>
+    </div>
+
+    <div class="repo-card">
+      <h4>pcm_base (Odoo module) <span class="badge reported">repo khác</span></h4>
+      <p>Module Odoo 17 nhận dữ liệu, hiển thị, quản lý cấu hình. Đường dẫn thật: <code>instance_pcmppdpodnam/pcm_base/</code> (+ <code>pod_screen</code>, <code>ppd_process</code> phụ trợ). <strong>Quan trọng:</strong> pcm_base KHÔNG lưu lịch sử đo lường — chỉ giữ snapshot mới nhất/channel trên <code>pcm.channel</code> (last_value/last_ts/last_quality). Toàn bộ time-series nằm ở SQLite phía edge_collector.</p>
+      <p>File được nhắc tới: <code>controllers/ingest.py</code> (route <code>/pcm/api/v1/measurements</code>), <code>models/pcm_channel.py</code> (<code>_upsert</code>/<code>_touch</code>), <code>models/pcm_device.py</code> (<code>_seen_batch</code>, dòng ≈136-145), <code>models/pcm_edge.py</code> (<code>_hello</code>).</p>
+    </div>
+
+    <div class="callout ok">
+      <span class="tag">Bản đồ dữ liệu tồn tại ở đâu</span>
+      <div><strong>edge_collector</strong> = full history (SQLite, <code>history_insert_many</code>). <strong>pcm_base/Odoo</strong> = latest snapshot/channel + audit trail nghiệp vụ (workorder, QC...). Muốn xem lịch sử đo dài hạn → tra ở edge_collector, KHÔNG phải Odoo.</div>
+    </div>
+  </section>
+
+  <!-- 3 -->
+  <section id="luong-du-lieu">
+    <p class="section-num">03</p>
+    <h2>Luồng dữ liệu — file:line chi tiết</h2>
+
+    <h3>3.1 Nhận từ thiết bị (device → edge_collector)</h3>
+    <table>
+      <tr><th>Nguồn</th><th>Đường vào edge_collector</th><th>Auth</th></tr>
+      <tr>
+        <td>ESP32 firmware</td>
+        <td><span class="badge verified">MQTT</span> <code>fms/&lt;serial&gt;/{meas,status,cmdack}</code> → <code>MqttConsumer._handle()</code> <span class="file-anchor">mqtt_consumer.py:207</span></td>
+        <td>HMAC tùy chọn (§4) — firmware cũ chưa ký vẫn qua</td>
+      </tr>
+      <tr>
+        <td>node_agent (Pi/PC)</td>
+        <td><span class="badge reported">Đang chuyển từ HTTP sang MQTT</span> — trước: <code>POST /node/v1/measurements</code> <span class="file-anchor">node_api.py:69</span>; sau (mirror ESP32): cùng topic MQTT ở trên, ký HMAC bằng <code>api_key</code> học qua <code>/hello</code></td>
+        <td>HTTP: <code>X-Device-Serial</code> bắt buộc + <code>X-API-Key</code> có-điều-kiện <span class="file-anchor">node_api.py:33</span></td>
+      </tr>
+    </table>
+
+    <h3>3.2 Gửi lên Odoo (edge_collector → pcm_base)</h3>
+    <pre><code><span class="com"># scheduler.py — EdgeAgent</span>
+<span class="kw">async def</span> _flush_loop(<span class="kw">self</span>):        <span class="com"># :138 — gom self._pending -> outbox mỗi submit_interval_s</span>
+<span class="kw">async def</span> _drain_serial(<span class="kw">self</span>, serial):  <span class="com"># :202 — rút outbox, gọi odoo.measurements(), áp backoff khi 429/5xx</span>
+<span class="kw">async def</span> _sender_loop(<span class="kw">self</span>):        <span class="com"># :227 — semaphore MAX_CONCURRENT_SERIALS=8 (:166), chạy song song N serial</span>
+
+<span class="com"># odoo_client.py — OdooClient</span>
+<span class="kw">async def</span> measurements(...):        <span class="com"># :121-129 — POST /pcm/api/v1/measurements</span>
+<span class="kw">def</span> _parse(r):                     <span class="com"># :66 — parse status_code + retry_after (429) cho mọi response lỗi</span></code></pre>
+
+    <h3>3.3 Nhận lệnh/config từ Odoo (pcm_base → edge_collector → device)</h3>
+    <pre><code><span class="com"># manager.py — SourceManager</span>
+<span class="kw">async def</span> apply_config(<span class="kw">self</span>, cfg):    <span class="com"># :76 — chỉ restart driver có config_rev đổi</span>
+<span class="kw">async def</span> queue_command(...):        <span class="com"># :171 — MQTT publish_command (nếu caps) hoặc poll-queue</span>
+<span class="kw">def</span> cached_node_api_key(<span class="kw">self</span>, serial): <span class="com"># :156 — tra api_key Odoo đã cấp cho serial</span></code></pre>
+  </section>
+
+  <!-- 4 -->
+  <section id="contract-hmac">
+    <p class="section-num">04</p>
+    <h2>Contract — HMAC verify cho MQTT uplink <span class="badge verified">edge_collector đã implement</span></h2>
+
+    <h4>Thuật toán ký (khớp cả 2 phía)</h4>
+    <pre><code><span class="kw">import</span> hashlib, hmac, json
+
+<span class="kw">def</span> _canonical(payload: dict) -&gt; bytes:
+    <span class="kw">return</span> json.dumps(payload, sort_keys=<span class="kw">True</span>, separators=(<span class="str">","</span>, <span class="str">":"</span>)).encode()
+
+<span class="kw">def</span> _sign(api_key: str, payload: dict) -&gt; str:
+    <span class="kw">return</span> hmac.new(api_key.encode(), _canonical(payload), hashlib.sha256).hexdigest()
+
+<span class="com"># Verify (edge_collector, mqtt_consumer.py:461):</span>
+<span class="com"># pop "sig" ra khoi dict -> tinh lai sign tren phan con lai -> hmac.compare_digest</span></code></pre>
+
+    <h4>Quy tắc áp dụng — nhớ 3 điều này</h4>
+    <ol>
+      <li><strong>Tùy chọn theo sự có mặt của field <code>"sig"</code>.</strong> Payload KHÔNG có <code>"sig"</code> → xử lý như cũ (ESP32 chưa nâng cấp). Có <code>"sig"</code> → verify NGHIÊM (sai/thiếu api_key cached = reject). Đây là lý do tương thích ngược không cần code riêng cho từng loại firmware.</li>
+      <li><strong>LWT không cần sig.</strong> <code>{"online": false}</code> do broker tự phát khi mất TCP không có <code>"sig"</code> (không thể ký động lúc socket đã đứt) → tự động qua vì rule #1, không cần code riêng.</li>
+      <li><strong>3 topic áp dụng:</strong> <code>meas</code>, <code>cmdack</code>, và <code>status</code> khi <code>online:true</code> (không áp cho <code>status</code> khi <code>online:false</code>).</li>
+    </ol>
+
+    <table>
+      <tr><th>Thứ tự sự kiện bắt buộc</th><th>Vì sao</th></tr>
+      <tr><td>Node phải chờ <code>/hello</code> trả <code>200</code> (đã cache <code>api_key</code>) rồi MỚI mở kết nối MQTT</td><td>Tránh race: message MQTT đầu tiên tới trước khi edge kịp cache key → reject nhầm</td></tr>
+    </table>
+
+    <div class="callout warn">
+      <span class="tag">Residual risk đã biết</span>
+      <div>(1) Không có lộ trình bắt buộc dần <code>"sig"</code> — ai bỏ field này vẫn qua như cũ. (2) Không chống replay (không nonce/timestamp trong phần ký). Cả 2 chấp nhận theo Simplicity First, chưa có threat cụ thể (LAN nội bộ). Xem §9 việc còn mở nếu muốn siết.</div>
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section id="contract-429">
+    <p class="section-num">05</p>
+    <h2>Contract — 429 + backoff <span class="badge verified">edge_collector</span> <span class="badge reported">pcm_base</span></h2>
+
+    <h4>Phía pcm_base sinh 429 (reported)</h4>
+    <ul>
+      <li>Status <code>429</code>, header <code>Retry-After: &lt;n&gt;</code> — <strong>delta-seconds</strong> (số nguyên giây), KHÔNG phải HTTP-date.</li>
+      <li>Body kèm theo: <code>{'ok': false, 'error': 'edge busy, retry', 'retry_after': &lt;n&gt;}</code> (phòng khi client strip header).</li>
+      <li>Trigger: CHỈ ở <code>/pcm/api/v1/measurements</code>, khi lock contention trên <code>pcm.edge</code> row vượt ngưỡng (~2s). KHÔNG áp cho <code>hello</code>/<code>config</code>/<code>heartbeat</code>/<code>source_status</code>.</li>
+      <li>Batch chưa bị ghi gì khi trả 429 — an toàn để retry nguyên batch.</li>
+    </ul>
+
+    <h4>Phía edge_collector nhận + backoff <span class="badge verified">verified</span></h4>
+    <pre><code><span class="com"># scheduler.py::EdgeAgent</span>
+BACKOFF_BASE_S = <span class="str">1.0</span>       <span class="com"># :178</span>
+BACKOFF_CAP_S  = <span class="str">30.0</span>      <span class="com"># :179 — cap KHỚP node_agent/ESP32 (đã chốt cross-project)</span>
+BACKOFF_JITTER = <span class="str">0.2</span>       <span class="com"># :180 — ±20%</span>
+
+<span class="kw">def</span> _note_backoff(<span class="kw">self</span>, serial, retry_after):   <span class="com"># :182</span>
+    <span class="com"># delay = max(delay hiện tại, retry_after) -> cap 30s -> +jitter -> set _backoff_until</span>
+    <span class="com"># _backoff_delay *= 2 (cap 30s) cho lần fail kế tiếp</span>
+
+<span class="kw">def</span> _clear_backoff(<span class="kw">self</span>, serial):             <span class="com"># :198 — reset khi gửi thành công</span></code></pre>
+    <ul>
+      <li><strong>Backoff RIÊNG theo serial</strong> — 1 serial bị 429/5xx không ảnh hưởng serial khác.</li>
+      <li><strong>Retry-After là SÀN</strong>, không phải giá trị cố định — nếu backoff nội bộ (do fail liên tiếp) đã lớn hơn thì giữ nguyên, không hạ xuống.</li>
+      <li>Áp dụng cho <code>429</code> HOẶC <code>&gt;=500</code>. KHÔNG áp cho lỗi mạng thuần (không có <code>status_code</code> — httpx connection error) — giữ nhịp <code>_sender_loop</code> cũ (0.02s/1.0s).</li>
+      <li>Check backoff Ở ĐẦU <code>_drain_serial</code> — nếu còn cooldown, return <code>False</code> ngay, KHÔNG gọi <code>measurements()</code>.</li>
+    </ul>
+  </section>
+
+  <!-- 6 -->
+  <section id="contract-idempotency">
+    <p class="section-num">06</p>
+    <h2>Contract — Idempotency <code>(serial, bid, seq)</code> <span class="badge reported">pcm_base</span></h2>
+    <p>Xác nhận 2026-09-29 (sau khi phát hiện thiếu bước reuse-first — đáng lẽ phải đọc <code>.common-skill/Skill-Retry-Backoff-Transient-HTTP-5xx-429.md</code> trước khi code §5, skill này bắt buộc phân biệt idempotent/non-idempotent cho retry logic):</p>
+    <pre><code><span class="com"># pcm_device.py — pcm.device._seen_batch(bid, seq), ~:136-145 (reported)</span>
+<span class="kw">def</span> _seen_batch(<span class="kw">self</span>, bid, seq):
+    <span class="kw">if</span> bid <span class="kw">in</span> (<span class="kw">None</span>, <span class="str">''</span>) <span class="kw">or</span> seq <span class="kw">in</span> (<span class="kw">None</span>, <span class="str">''</span>):
+        <span class="kw">return</span> <span class="kw">False</span>
+    bid, seq = str(bid), int(seq)
+    <span class="kw">if</span> <span class="kw">self</span>.boot_id == bid <span class="kw">and</span> seq &lt;= (<span class="kw">self</span>.last_seq <span class="kw">or</span> <span class="str">0</span>):
+        <span class="kw">return</span> <span class="kw">True</span>          <span class="com"># đã xử lý -> {'ok': True, 'accepted': 0, 'dup': True}</span>
+    <span class="kw">self</span>.sudo().write({<span class="str">'boot_id'</span>: bid, <span class="str">'last_seq'</span>: seq})
+    <span class="kw">return</span> <span class="kw">False</span></code></pre>
+    <p>Cơ chế: monotonic high-water-mark, atomic trong CÙNG transaction Postgres với toàn bộ write của request. Response mất nhưng request đã commit → retry đúng <code>(bid,seq)</code> → dedupe đúng, không ghi trùng.</p>
+    <div class="callout warn">
+      <span class="tag">Residual cực nhỏ</span>
+      <div>edge_collector crash+restart sinh <code>boot_id</code> MỚI đúng lúc response cũ đang bay về → dedup không nhận ra bid cũ → có thể ghi trùng nếu resend. Giới hạn cố hữu của dedup theo boot-session (không có idempotency-key sống sót qua restart) — không phải bug, tần suất thực tế rất hiếm. KHÔNG cần code gì thêm trừ khi tần suất crash thực tế đáng kể.</div>
+    </div>
+  </section>
+
+  <!-- 7 -->
+  <section id="contract-deadletter">
+    <p class="section-num">07</p>
+    <h2>Contract — Dead-letter mechanism <span class="badge reported">pcm_base</span></h2>
+    <p>Model mới <code>pcm.ingest.failure</code> — log persistent cho item bị savepoint rollback trong <code>measurements()</code>.</p>
+    <table>
+      <tr><th>Field</th><th>Kiểu</th><th>Ý nghĩa</th></tr>
+      <tr><td><code>edge_id</code>/<code>device_id</code>/<code>channel_code</code></td><td>Char/ref</td><td><code>channel_code</code> là Char (không phải Many2one) phòng khi chính <code>_upsert</code> fail nên channel chưa tồn tại</td></tr>
+      <tr><td><code>payload</code></td><td>Json</td><td>Nguyên item gốc để replay chính xác</td></tr>
+      <tr><td><code>state</code></td><td>Selection</td><td><code>pending → retrying → resolved / needs_review / dropped</code></td></tr>
+      <tr><td><code>attempts</code></td><td>Integer</td><td>Cap 3 lần auto-retry</td></tr>
+      <tr><td><code>bid</code>/<code>seq</code></td><td>Char</td><td>Chỉ để trace, không dùng logic</td></tr>
+      <tr><td><code>first_failed_at</code></td><td>Datetime</td><td>Set 1 LẦN lúc tạo record, KHÔNG đổi khi retry — dùng làm proxy timestamp cho staleness guard (xem dưới)</td></tr>
+      <tr><td><code>resolved_at</code></td><td>Datetime</td><td>Thêm sau (thay <code>write_date</code>) để GC chính xác hơn</td></tr>
+    </table>
+
+    <h4>Cron <code>cron_pcm_ingest_failure_retry</code></h4>
+    <p>Mỗi 5 phút, lấy <code>state='pending'</code> + <code>attempts&lt;3</code>, replay <code>Channel._upsert + _touch</code> trong savepoint riêng. Fail 3 lần → <code>needs_review</code> (dừng auto-retry, cần người xem). Retention: xoá <code>resolved</code>/<code>dropped</code> sau 14 ngày; <code>pending</code>/<code>needs_review</code> giữ vô thời hạn.</p>
+
+    <h4>Staleness guard trong <code>_retry_one()</code> (fix quan trọng, đọc kỹ nếu đụng code này)</h4>
+    <pre><code>effective_ts = item_ts <span class="kw">or</span> <span class="kw">self</span>.first_failed_at   <span class="com"># fallback khi device không gửi ts thật (ESP32/sim không RTC)</span>
+<span class="kw">if</span> effective_ts <span class="kw">and</span> ch.last_ts <span class="kw">and</span> effective_ts &lt; ch.last_ts:
+    stale = <span class="kw">True</span>   <span class="com"># channel đã bị path chính chạm tới SAU khi item này lần đầu đến -> SKIP _touch(), đánh dấu resolved</span></code></pre>
+    <p><strong>Vì sao cần guard này:</strong> nếu KHÔNG có, cron retry item cũ (fail lúc trước) có thể ghi đè snapshot bằng dữ liệu cũ hơn dữ liệu mới đã tới qua path chính trong lúc item đó nằm chờ ở dead-letter — sai cả <code>last_value</code> hiển thị lẫn threshold-crossing trigger (<code>ppd_process</code> so <code>prev</code>/<code>cur</code> sai timeline).</p>
+    <p><strong>KHÔNG đụng core <code>_touch()</code></strong> — guard chỉ nằm ở điều kiện có gọi <code>_touch()</code> hay không trong <code>_retry_one()</code>, lời gọi <code>_touch(ts=item_ts,...)</code> vẫn truyền y nguyên <code>item_ts</code> gốc (có thể None).</p>
+    <div class="callout warn">
+      <span class="tag">Residual đã biết</span>
+      <div>Lệch clock nếu 1 channel trộn ts thật (device epoch) + ts=None (Odoo-clock) xen kẽ — hiếm (firmware 1 thiết bị thường nhất quán 1 kiểu ts). Race cực hẹp (micro-giây) nếu batch mới chen đúng giữa lúc <code>_retry_one()</code> đang chạy — giới hạn cố hữu của cron 5 phút/lần, không đáng khoá thêm.</div>
+    </div>
+
+    <div class="callout ok">
+      <span class="tag">Điểm tích cực</span>
+      <div>Cách hiện thực (skip TOÀN BỘ <code>_touch()</code> thay vì chỉ skip phần snapshot) đóng luôn concern trigger-engine fire sai — trigger không bao giờ thấy item cũ bị supersede nữa.</div>
+    </div>
+  </section>
+
+  <!-- 8 -->
+  <section id="incident-domino">
+    <p class="section-num">08</p>
+    <h2>Incident — SerializationFailure domino gây mất dữ liệu <span class="badge reported">pcm_base</span> <span class="badge verified">edge_collector verify độc lập</span></h2>
+
+    <div class="callout warn">
+      <span class="tag">Bối cảnh phát hiện</span>
+      <div>Sau khi deploy 429/backoff (§5) production, Nam báo "data không lên Odoo" cho site PI-LINE1 (cân điện tử tần suất đọc rất cao). Điều tra bằng log thật (không suy đoán) phát hiện chuỗi 2 bug độc lập — bug này là bug #1.</div>
+    </div>
+
+    <h4>Root cause (reported, xác nhận qua log + source Odoo)</h4>
+    <p>Postgres isolation <code>REPEATABLE READ</code> (không phải "read committed" như <code>SHOW default_transaction_isolation</code> hay báo — verify tại <code>odoo/sql_db.py:275</code>). Hai write KHÔNG có savepoint riêng chạy MỌI request <code>/measurements</code>: <code>pcm_device.py::_upsert()</code> (≈:108) và <code>_seen_batch()</code> (≈:144, ghi <code>boot_id</code>/<code>last_seq</code>). Khi 2 transaction đụng cùng row này → <code>SerializationFailure</code> (40001) lan ra NGOÀI mọi savepoint phía sau (kể cả savepoint per-item của dead-letter §7) vì transaction đã rơi vào trạng thái <em>aborted</em> từ điểm hỏng đầu tiên — không phải 32 lỗi độc lập trên 32 channel, mà là <strong>domino từ 1 điểm hỏng duy nhất</strong> lan xuống toàn bộ item trong batch. Odoo's outer <code>retrying()</code> (<code>odoo/service/model.py</code>) retry cả request tới 5 lần server-side → client (edge) KHÔNG BAO GIỜ thấy lỗi, chỉ nhận response lần thử cuối — <strong>đây là lý do edge log luôn thấy <code>ok:True</code></strong> dù có domino, dễ đánh lừa nếu chỉ nhìn <code>ok</code> mà không nhìn <code>accepted</code>/<code>failed</code>.</p>
+
+    <h4>Bug tại edge_collector bị lộ ra cùng lúc <span class="badge verified">edge_collector, đã fix</span></h4>
+    <pre><code><span class="com"># scheduler.py::_drain_serial(), TRƯỚC fix — chỉ check res.get("ok"),</span>
+<span class="com"># KHÔNG check accepted/failed:</span>
+res = <span class="kw">await</span> <span class="kw">self</span>.odoo.measurements(...)
+<span class="kw">if</span> <span class="kw">not</span> res.get(<span class="str">"ok"</span>):
+    ...
+    <span class="kw">break</span>
+<span class="kw">self</span>.store.outbox_delete(row[<span class="str">"id"</span>])   <span class="com"># XOÁ dù accepted:0, failed:N (domino) !</span></code></pre>
+    <p>Log production thật bắt được 8 lần <code>{'ok': True, 'accepted': 0, 'failed': N}</code> (N=6,7,7,7,8,8,32) trong 25 phút — edge đã XOÁ các outbox row đó dù KHÔNG có item nào được Odoo chấp nhận, vì code chỉ nhìn <code>ok</code>. Đây là <strong>data-loss thật</strong>, không phải lý thuyết.</p>
+
+    <div class="callout warn">
+      <span class="tag">Quyết định — KHÔNG sửa <code>_drain_serial</code></span>
+      <div>Xác nhận với pcm_base: <code>_seen_batch()</code> ghi <code>last_seq</code> NGAY khi xử lý request bất kể <code>accepted</code>/<code>failed</code> — high-water-mark đã tiến qua, resend CÙNG <code>(bid,seq)</code> sẽ bị coi là <code>dup</code> và KHÔNG reprocess (thiết kế chủ định — recovery cho item failed chỉ qua cron dead-letter §7, không qua edge resend). Vậy "không xoá outbox khi failed&gt;0" ở edge sẽ VÔ NGHĨA — quyết định giữ nguyên <code>_drain_serial</code>, fix đúng gốc ở pcm_base (dưới).</div>
+    </div>
+
+    <h4>Fix phía pcm_base (reported, deploy commit <code>18c3339</code>)</h4>
+    <ul>
+      <li>Bọc <code>_upsert()</code>+<code>_seen_batch()</code> trong savepoint RIÊNG ở đầu <code>measurements()</code>, catch <code>SerializationFailure</code> cùng nhóm <code>LockNotAvailable</code>/<code>QueryCanceled</code> đã có → trả <strong>429 sớm</strong> TRƯỚC KHI chạm item loop (giống cơ chế 429 đã có cho <code>pcm.edge</code>, §5) — loại bỏ hẳn domino vì transaction không bao giờ rơi vào aborted-cascade nữa.</li>
+      <li>Debounce write cho <code>pcm_device</code> (giảm tần suất write không cần thiết, cùng pattern đã áp cho <code>pcm.edge.last_seen</code>).</li>
+    </ul>
+
+    <h4>Verify kết quả (verified, cả 2 phía)</h4>
+    <table>
+      <tr><th>Chỉ số</th><th>Trước fix</th><th>Sau fix</th></tr>
+      <tr><td>Outbox PI-LINE1 (SQLite, edge)</td><td>5801 dòng, TĂNG dần</td><td>3140 → giảm nhanh → ổn định gần 0</td></tr>
+      <tr><td><code>failed&gt;0</code> trong response</td><td>8 lần / 25 phút</td><td>0 lần / 5 phút sau fix</td></tr>
+      <tr><td>SerializationFailure thật (Postgres)</td><td>Lan domino (N tới 32)</td><td>Vẫn xảy ra (~9 lần/3 phút, tải cao) nhưng bị catch sạch → 429 → retry thành công ngay, KHÔNG domino</td></tr>
+    </table>
+    <p>Chi tiết đầy đủ điều tra (log, timeline, cross-session coordination): <code>.obsidian-vault/Fix-History/</code> (nếu đã persist — xem §14 lệnh <code>vault-curator</code>).</p>
+  </section>
+
+  <!-- 9 -->
+  <section id="contract-dedup">
+    <p class="section-num">09</p>
+    <h2>Contract — Change-detection + heartbeat (<code>must_send_every</code>/<code>max_age_ms</code>) <span class="badge verified">edge_collector</span> <span class="badge reported">pcm_base</span></h2>
+
+    <div class="callout warn">
+      <span class="tag">Root cause gốc của incident PI-LINE1</span>
+      <div>Sau khi fix domino (§8), Nam làm rõ yêu cầu nghiệp vụ thật: cân điện tử có thể để sản phẩm đứng yên RẤT LÂU, nhưng khi giá trị đổi (đặt/lấy sản phẩm) PHẢI hiển thị NGAY. Điều tra <code>drivers/serial_ascii.py</code> xác nhận: driver ASCII continuous-output gửi MỌI dòng đọc được (~20-100ms/dòng) vào outbox — KỂ CẢ khi giá trị không đổi. Đây là nguyên nhân GỐC khiến outbox phình to (không chỉ do domino §8) — sẽ TÁI DIỄN bất cứ khi nào sản phẩm để yên lâu, độc lập với mọi fix Postgres.</div>
+    </div>
+
+    <h4>Thiết kế đã chốt (cross-session, Nam duyệt)</h4>
+    <p>Hệ thống cover NHIỀU loại IoT (không riêng cân) — thiết kế phải generic: cân (snapshot, đứng yên lâu), counter (đếm dồn, MỌI occurrence là 1 sự kiện dù giá trị giống nhau), cảm biến RTU (đã tự giới hạn bởi <code>poll_ms</code>). 2 field mới per-channel trong response <code>/pcm/api/v1/edge/config</code>:</p>
+    <ul>
+      <li><code>max_age_ms</code> <span class="badge reported">đã có sẵn từ trước ở <code>pcm_channel.py:486</code>, edge trước đây KHÔNG dùng</span> — ngưỡng freshness hiển thị trên UI Odoo (vd 1500ms cho scale, 10000ms cho temp/humid RTU). Dùng LÀM heartbeat cadence = <code>max_age_ms * 0.5</code>, RIÊNG TỪNG CHANNEL — không dùng 1 hằng số chung (ngưỡng lệch nhau nhiều giữa các loại sensor).</li>
+      <li><code>must_send_every</code> <span class="badge reported">mới, pcm_base</span> = <code>raw_forward OR write_mode=='add' OR bool(trigger_ids)</code> — bảo vệ channel counter/raw-forward/trigger-subscribed, các channel này PHẢI nhận MỌI occurrence, KHÔNG được lọc trùng. Mặc định <code>True</code> (an toàn, giữ hành vi cũ) khi field thiếu/không rõ.</li>
+    </ul>
+
+    <h4>Code phía edge_collector <span class="badge verified">commit <code>0233343</code></span></h4>
+    <pre><code><span class="com"># manager.py::SourceManager</span>
+<span class="kw">def</span> channel_meta_for(<span class="kw">self</span>, serial, ch_code) -&gt; dict:  <span class="com"># :63</span>
+    <span class="com"># default AN TOÀN khi channel chưa có trong config:</span>
+    <span class="kw">return</span> <span class="kw">self</span>._channel_meta.get((serial, ch_code)) <span class="kw">or</span> {
+        <span class="str">"max_age_ms"</span>: <span class="kw">None</span>, <span class="str">"must_send_every"</span>: <span class="kw">True</span>,
+    }
+
+<span class="com"># apply_config(cfg): populate _channel_meta cho MỌI channel (kể cả</span>
+<span class="com"># không route được driver — khác _route/channels_by_source). Chuẩn hoá</span>
+<span class="com"># None -> True NGAY LÚC GHI (finding python-reviewer: .get(key, True)</span>
+<span class="com"># chỉ áp default khi key VẮNG MẶT, key hiện diện với value None vẫn lọt qua):</span>
+me = ch.get(<span class="str">"must_send_every"</span>)
+channel_meta[(dev[<span class="str">"serial"</span>], ch[<span class="str">"code"</span>])] = {
+    <span class="str">"max_age_ms"</span>: ch.get(<span class="str">"max_age_ms"</span>),
+    <span class="str">"must_send_every"</span>: <span class="kw">True</span> <span class="kw">if</span> me <span class="kw">is</span> <span class="kw">None</span> <span class="kw">else</span> <span class="nb">bool</span>(me),
+}
+
+<span class="com"># scheduler.py::EdgeAgent</span>
+DEFAULT_HEARTBEAT_S = <span class="str">5.0</span>   <span class="com"># :69 — fallback khi max_age_ms thiếu/không hợp lệ</span>
+
+<span class="kw">def</span> _should_skip_duplicate(<span class="kw">self</span>, serial, ch, v, s, q, stable) -&gt; <span class="nb">bool</span>:  <span class="com"># :71</span>
+    meta = <span class="kw">self</span>.manager.channel_meta_for(serial, ch)
+    <span class="kw">if</span> meta.get(<span class="str">"must_send_every"</span>, <span class="kw">True</span>):
+        <span class="kw">return</span> <span class="kw">False</span>                          <span class="com"># counter/trigger/raw-forward: KHÔNG lọc</span>
+    <span class="com"># so v/s/q/stable với lần enqueue trước (_last_enqueued, RAM, key (serial,ch));</span>
+    <span class="com"># same=True + chưa qua heartbeat_s (max_age_ms*0.5, fallback DEFAULT_HEARTBEAT_S)</span>
+    <span class="com"># -> skip; ngược lại (đổi giá trị HOẶC hết heartbeat) -> enqueue + update state</span>
+
+<span class="kw">def</span> _on_value(<span class="kw">self</span>, serial, ch, v, s, q, ts, stable):  <span class="com"># :93</span>
+    <span class="kw">try</span>:
+        <span class="kw">self</span>.store.history_insert_many(...)     <span class="com"># LUÔN ghi (Live activity local không đổi)</span>
+    <span class="kw">except</span> Exception:
+        _logger.exception(...)                <span class="com"># lỗi history KHÔNG được chặn đường outbox (finding 🟠 đã fix)</span>
+    <span class="kw">if</span> <span class="kw">self</span>._should_skip_duplicate(...): <span class="kw">return</span>
+    <span class="kw">self</span>._pending.setdefault(serial, []).append(item)</code></pre>
+
+    <h4>Test + Review <span class="badge verified">231/231 PASS</span></h4>
+    <p>22 test mới (<code>tests/test_scheduler_dedup.py</code>, <code>tests/test_manager_channel_meta.py</code>), mutation-check 3 case (đảo <code>must_send_every</code>, bỏ check <code>stable</code>, bỏ check heartbeat) đều bắt đúng test FAIL tương ứng. Reviewer tìm 2 finding trước khi verdict cuối "an toàn deploy": 🟠 exception-ordering (history write throw không được chặn outbox — đã fix + có regression test riêng), 🟡 null-handling <code>must_send_every=None</code> (đã fix, chuẩn hoá lúc ghi).</p>
+
+    <h4>Verify production thật <span class="badge verified">so sánh trước/sau</span></h4>
+    <table>
+      <tr><th>Chỉ số (channel <code>scale_real</code>, <code>max_age_ms=1500</code>)</th><th>Trước</th><th>Sau</th></tr>
+      <tr><td>Tần suất gửi khi đứng yên</td><td>~20-100ms/lần (10-50/giây)</td><td>~750-800ms/lần (khớp <code>1500*0.5</code>)</td></tr>
+      <tr><td>Outbox PI-LINE1</td><td>Phình dần</td><td>≈1 dòng, ổn định</td></tr>
+      <tr><td>Counter <code>count1</code>/<code>pedal1</code> (<code>must_send_every=True</code>)</td><td>Mọi occurrence</td><td>Không đổi — vẫn mọi occurrence (321 lần/15 phút, verify log thật)</td></tr>
+    </table>
+  </section>
+
+  <!-- 10 -->
+  <section id="incident-configrev">
+    <p class="section-num">10</p>
+    <h2>Incident — <code>config_rev</code> không ổn định, vô hiệu hoá hot-reload <span class="badge reported">pcm_base, đã fix</span></h2>
+
+    <div class="callout warn">
+      <span class="tag">Phát hiện khi verify §9 trên production</span>
+      <div>Sau khi pcm_base deploy <code>must_send_every</code>, gọi <code>OdooClient.pull_config()</code> thật 4 lần cách nhau 3s trong container production: <code>config_version</code> trả về <strong>766555 → 766560 → 766570 → 766575</strong> — TĂNG LIÊN TỤC mỗi lần đọc, không phải revision ổn định.</div>
+    </div>
+
+    <h4>Vì sao nghiêm trọng — không chỉ ảnh hưởng §9</h4>
+    <pre><code><span class="com"># scheduler.py::_config_loop() — cơ chế debounce hiện có (KHÔNG đổi bởi fix này)</span>
+<span class="kw">if</span> rev != <span class="kw">self</span>._pending_rev:
+    <span class="kw">self</span>._pending_rev, <span class="kw">self</span>._pending_rev_since = rev, now
+stable_long_enough = (now - <span class="kw">self</span>._pending_rev_since) &gt;= settings.config_debounce_s
+<span class="kw">if</span> rev != applied_rev <span class="kw">and</span> stable_long_enough:
+    <span class="kw">await</span> <span class="kw">self</span>.manager.apply_config(cfg)   <span class="com"># KHÔNG BAO GIỜ chạy nếu rev đổi mỗi lần đọc!</span></code></pre>
+    <p>Nếu <code>config_version</code> đổi MỖI LẦN đọc, <code>stable_long_enough</code> KHÔNG BAO GIỜ đạt được → <code>apply_config()</code> không bao giờ chạy → <strong>toàn bộ cơ chế hot-reload config bị vô hiệu hoá</strong> — không chỉ field <code>must_send_every</code>/<code>max_age_ms</code>, mà MỌI thay đổi config tương lai (driver mới, channel mới, mapping đổi...) đều không bao giờ được edge áp dụng cho tới khi restart process thủ công. Restart container để test cũng KHÔNG giúp gì nếu bug vẫn còn (chỉ reset debounce state, rev vẫn tiếp tục tăng).</p>
+
+    <h4>Root cause (reported, xác nhận qua psql trực tiếp)</h4>
+    <p><code>pcm.channel.write()</code> bump <code>config_rev</code> chỉ dựa "field nào CÓ MẶT trong <code>vals</code>" (<code>CONFIG_FIELDS &amp; set(vals)</code>), KHÔNG kiểm tra giá trị có THỰC SỰ đổi không. <code>_autodetect_one()</code> (chạy qua <code>_autodetect_suggest()</code> mỗi request <code>/measurements</code> cho channel chưa phân loại xong — verify: 9 channel dưới <code>EDGE-1</code> vẫn <code>detected=True, suggested_field_key=NULL</code>) ghi lại CÙNG giá trị <code>kind</code>/<code>max_age_ms</code>/... mỗi lần gọi (regex match deterministic, không đổi) → bump vô nghĩa liên tục. <strong>Bug tiền tồn tại</strong> (không do đợt deploy nào gần đây), chỉ LỘ RA vì <code>_config_loop()</code>'s debounce là lần ĐẦU TIÊN có thứ gì thật sự phụ thuộc "config_rev chỉ đổi khi config thật đổi".</p>
+
+    <h4>Fix (reported, deploy commit <code>5447248</code>, pcm_base 17.0.1.1.3)</h4>
+    <p><code>write()</code> giờ so sánh giá trị CŨ (trước write) với giá trị MỚI (trong <code>vals</code>) cho từng field <code>CONFIG_FIELDS</code>, chỉ bump cho record THỰC SỰ đổi ít nhất 1 giá trị.</p>
+
+    <h4>Verify (verified, cả 2 phía)</h4>
+    <p>psql: <code>config_rev</code> của <code>EDGE-1</code> đứng yên <code>769385</code> cả 4 lần đọc liên tiếp (thay vì tăng). Edge: gọi <code>pull_config()</code> thật trong container production xác nhận độc lập <strong>y hệt kết quả</strong>. Chờ đủ 2 chu kỳ <code>config_poll_interval_s</code> (30s) → log <code>"đã áp dụng config_version=769385"</code> xuất hiện — <code>apply_config()</code> chạy được, hot-reload hoạt động lại bình thường.</p>
+
+    <div class="callout ok">
+      <span class="tag">Bài học cho lần sau</span>
+      <div>Bất kỳ field config mới nào phụ thuộc "chỉ áp dụng khi version thực sự đổi" (debounce, cache invalidation...) cần verify <strong>thực nghiệm</strong> bằng cách gọi API 2+ lần liên tiếp xem version có ổn định không — ĐỪNG giả định field revision luôn đúng nghĩa "chỉ tăng khi có thay đổi thật" chỉ vì tên field gợi ý vậy.</div>
+    </div>
+  </section>
+
+  <!-- 11 -->
+  <section id="trang-thai">
+    <p class="section-num">11</p>
+    <h2>Bảng trạng thái done/open</h2>
+    <table>
+      <tr><th>Hạng mục</th><th>edge_collector</th><th>node_agent</th><th>pcm_base</th></tr>
+      <tr><td>Event-driven realtime (bỏ chờ chu kỳ cố định)</td><td>—</td><td>✅ Done (verified)</td><td>—</td></tr>
+      <tr><td>MQTT uplink (thay HTTP measurements/command)</td><td>✅ verify HMAC done</td><td>✅ sign HMAC done</td><td>—</td></tr>
+      <tr><td>Dedupe/debounce/savepoint/truncate ingest</td><td>—</td><td>—</td><td>✅ Done</td></tr>
+      <tr><td>429 + backoff</td><td>✅ Done (commit <code>111f9d3</code>)</td><td>—</td><td>✅ Done</td></tr>
+      <tr><td>Dead-letter + staleness guard</td><td>—</td><td>—</td><td>✅ Done</td></tr>
+      <tr><td>Idempotency <code>(bid,seq)</code> xác nhận</td><td>—</td><td>—</td><td>✅ Đã có sẵn, xác nhận an toàn</td></tr>
+      <tr><td>Fix domino SerializationFailure (§8, data-loss)</td><td>✅ Verify (không cần đổi code)</td><td>—</td><td>✅ Done (commit <code>18c3339</code>)</td></tr>
+      <tr><td>Change-detection + heartbeat theo channel (§9)</td><td>✅ Done (commit <code>0233343</code>)</td><td>—</td><td>✅ Done (<code>must_send_every</code>/<code>max_age_ms</code>)</td></tr>
+      <tr><td>Fix <code>config_rev</code> không ổn định (§10)</td><td>✅ Verify (không cần đổi code)</td><td>—</td><td>✅ Done (commit <code>5447248</code>)</td></tr>
+      <tr><td>E2E test qua broker MQTT thật</td><td><span class="badge open">CHƯA làm</span></td><td><span class="badge open">CHƯA làm</span></td><td>N/A</td></tr>
+      <tr><td>Flag <code>EDGE_MQTT_REQUIRE_SIG</code> (bắt buộc sig dần)</td><td><span class="badge open">CHƯA làm</span></td><td>—</td><td>—</td></tr>
+    </table>
+    <div class="callout ok">
+      <span class="tag">Trạng thái tổng thể (29/09, cuối ngày)</span>
+      <div>Toàn bộ nhánh việc hôm nay đã ĐÓNG và verify end-to-end trên production thật: HMAC verify → event-driven realtime → 429/backoff → fix domino data-loss → change-detection/heartbeat chống flood outbox → fix hot-reload config. Chỉ còn 2 hạng mục §12 CHƯA làm (không khẩn cấp, có spec sẵn).</div>
+    </div>
+  </section>
+
+  <!-- 12 -->
+  <section id="viec-con-mo">
+    <p class="section-num">12</p>
+    <h2>Việc còn mở — có sẵn spec để làm ngay</h2>
+
+    <h3>12.1 Flag <code>EDGE_MQTT_REQUIRE_SIG</code> <span class="badge open">chưa thiết kế chi tiết</span></h3>
+    <p>Mục tiêu: sau khi mọi firmware (ESP32 + node_agent) đã nâng cấp ký HMAC, bật flag này để BẮT BUỘC mọi message MQTT phải có <code>"sig"</code> hợp lệ — đóng nốt lỗ hổng "bypass bằng cách bỏ field sig" hiện tại.</p>
+    <ul>
+      <li>Vị trí sửa: <code>mqtt_consumer.py::_handle()</code>, gần gate <code>if "sig" in data:</code> (≈:227) — đổi thành: nếu <code>settings.mqtt_require_sig</code> (mới) là True và <code>"sig" not in data</code> → reject luôn (giống hành vi khi sig sai).</li>
+      <li>Cần thêm setting mới trong <code>config.py</code> (theo pattern hiện có, xem <code>Settings</code> class) + field tương ứng trong <code>.env.example</code>.</li>
+      <li><strong>Điều kiện tiên quyết trước khi bật ở 1 site thật:</strong> xác nhận 100% node/firmware tại site đó đã publish kèm <code>"sig"</code> — bật sớm sẽ khoá luôn dữ liệu từ firmware chưa nâng cấp.</li>
+      <li>Cần: <code>python-test-writer</code> (test bật/tắt flag) + <code>python-reviewer</code> (đụng auth, bắt buộc theo CLAUDE.md).</li>
+    </ul>
+
+    <h3>12.2 Test end-to-end qua broker MQTT thật</h3>
+    <p>Hiện tại HMAC verify + event-driven fix chỉ có unit test (mock). Chưa có test 2 process thật (edge_collector + node_agent giả lập hoặc thật) nói chuyện qua 1 broker MQTT thật (Mosquitto/RabbitMQ), verify:</p>
+    <ul>
+      <li>Message ký đúng từ node_agent → edge_collector verify đúng (canonical JSON khớp byte-for-byte giữa 2 process Python thật, không chỉ lý thuyết).</li>
+      <li>LWT thật (kill process node_agent, không graceful shutdown) → edge_collector nhận đúng <code>{"online": false}</code> từ broker.</li>
+      <li>Latency thật đo được (không phải suy luận từ code) cho luồng event-driven mới.</li>
+    </ul>
+
+    <h3>12.3 Đối chiếu byte-for-byte canonical JSON (residual đã biết từ review)</h3>
+    <p><code>python-reviewer</code> đã note: <code>ensure_ascii=True</code> mặc định của <code>json.dumps</code> và cách format số thực (float) CÓ THỂ khác nếu 2 phía không cùng dùng Python. Hiện tại cả edge_collector lẫn node_agent đều Python → tự động khớp, nhưng nếu sau này thêm firmware/ngôn ngữ khác ký HMAC (vd C/C++ cho ESP32 thật), cần 1 test-vector cố định 2 bên cùng thống nhất (không chỉ tin code trùng ngôn ngữ).</p>
+
+    <h3>12.4 Regression test riêng cho <code>_should_skip_duplicate</code> khi <code>history_insert_many</code> lỗi <span class="badge verified">đã có, xem §9</span></h3>
+    <p>Đã có 2 test (<code>test_on_value_history_write_failure_does_not_block_pending_append</code>, <code>test_on_value_history_write_failure_does_not_break_dedup_for_next_call</code>) — không còn open, ghi lại đây để tránh tưởng lầm là gap khi đọc §8 finding 🟠.</p>
+  </section>
+
+  <!-- 13 -->
+  <section id="gotcha">
+    <p class="section-num">13</p>
+    <h2>Gotchas / Invariants — đừng phá</h2>
+    <ul>
+      <li><strong>1-worker constraint</strong> (<code>__main__.py</code>) — <code>Settings</code> singleton + <code>.env</code> ghi không flock. KHÔNG đổi sang multi-worker/multi-process trên cùng <code>EDGE_STATE_DIR</code>.</li>
+      <li><strong><code>Settings.reload()</code> sửa in-place</strong> (<code>config.py</code>) — module khác giữ reference cũ lúc import. Field mới muốn hot-reload phải cập nhật đúng object đang tồn tại.</li>
+      <li><strong>Durable-first</strong> — mọi phép đo đẩy Odoo phải qua <code>outbox</code> SQLite (<code>store.py</code>) trước. KHÔNG gọi thẳng <code>OdooClient.measurements()</code> bỏ qua outbox.</li>
+      <li><strong>2 triết lý auth khác nhau, CÓ CHỦ ĐÍCH:</strong> <code>inbound_api.py</code> (Odoo→edge) chỉ log warning khi <code>X-Edge-Code</code> sai; <code>node_api.py</code> (node→edge) chặn cứng NHƯNG <code>/node/v1/hello</code> cố ý không cần key đúng (đường học key lần đầu). Đừng "sửa cho nhất quán".</li>
+      <li><strong>MQTT HMAC verify là tùy chọn</strong> (không mandatory) — đừng đổi thành bắt buộc mà không qua flag <code>EDGE_MQTT_REQUIRE_SIG</code> (§12.1) + xác nhận 100% firmware đã nâng cấp trước.</li>
+      <li><strong>Backoff 429/5xx RIÊNG theo serial</strong> — đừng gộp thành global backoff (sẽ làm 1 serial lỗi chặn hết serial khác, mất tác dụng semaphore song song).</li>
+      <li><strong>Driver restart chọn lọc</strong> — <code>apply_config</code> chỉ restart driver có <code>config_rev</code> đổi, đừng restart toàn bộ.</li>
+      <li><strong>Ghi lệnh xuống thiết bị vật lý thật (driver.command() ngoài <code>sim</code>) LUÔN cần xác nhận trước khi chạy</strong> — không auto-run, kể cả trong lúc debug.</li>
+      <li><strong><code>must_send_every</code> mặc định LUÔN là <code>True</code></strong> (§9) — an toàn = gửi mọi lần, giống hành vi cũ. ĐỪNG đổi default thành <code>False</code> dù "tiện" — sẽ âm thầm lọc mất occurrence của counter/trigger/raw-forward channel chưa kịp cấu hình field này.</li>
+      <li><strong><code>_channel_meta</code>/<code>_last_enqueued</code> chỉ populate/refresh trong <code>apply_config()</code></strong> — PHỤ THUỘC <code>config_rev</code> thật sự ổn định (§10). Đổi field config mới cần hot-reload → LUÔN verify thực nghiệm rev có đứng yên giữa 2 lần đọc trước khi tin debounce hoạt động, đừng giả định.</li>
+      <li><strong><code>_last_enqueued</code> là RAM state, mất khi restart</strong> — AN TOÀN theo thiết kế (item đầu tiên sau restart luôn <code>same=False</code> → gửi lại, chỉ dư 1 lần, không mất dữ liệu). Đừng "sửa" cho nó persist xuống SQLite trừ khi có lý do cụ thể mới.</li>
+    </ul>
+  </section>
+
+  <!-- 14 -->
+  <section id="lenh">
+    <p class="section-num">14</p>
+    <h2>Lệnh hay dùng</h2>
+    <pre><code><span class="com"># Chạy full test suite</span>
+venv_linux/bin/python -m pytest tests/ -v
+
+<span class="com"># Chỉ test liên quan HMAC/backoff</span>
+venv_linux/bin/python -m pytest tests/test_mqtt_consumer.py -k sig -v
+venv_linux/bin/python -m pytest tests/test_scheduler.py tests/test_odoo_client.py -v
+
+<span class="com"># Chỉ test change-detection + heartbeat (§9)</span>
+venv_linux/bin/python -m pytest tests/test_scheduler_dedup.py tests/test_manager_channel_meta.py -v
+
+<span class="com"># Smoke import (KHÔNG chạy app thật)</span>
+venv_linux/bin/python -c "import edge_collector"
+
+<span class="com"># Verify config_rev ổn định trên production (§10) — chạy TRONG container thật,</span>
+<span class="com"># dùng đúng OdooClient/Store thật, KHÔNG phải giả lập</span>
+docker exec &lt;container&gt; python3 -c "
+import asyncio
+from edge_collector.store import Store
+from edge_collector.odoo_client import OdooClient
+from edge_collector.config import settings
+
+async def main():
+    store = Store(settings.sqlite_path)
+    client = OdooClient(store)
+    for i in range(4):
+        res = await client.pull_config()
+        print(i, (res.get('config') or {}).get('config_version'))
+        await asyncio.sleep(3)
+    await client.aclose()
+asyncio.run(main())
+"
+<span class="com"># -> 4 giá trị PHẢI giống hệt nhau. Nếu tăng liên tục -> config_rev đang bug</span>
+<span class="com"># y hệt incident §10, apply_config() sẽ KHÔNG BAO GIỜ chạy.</span>
+
+<span class="com"># Tìm session peer đang mở (tên đổi mỗi phiên)</span>
+<span class="com"># -> dùng tool ListAgents trong Claude Code, không hard-code tên cũ</span></code></pre>
+  </section>
+
+  <footer>
+    <p>Nguồn: tổng hợp từ Fix-History <code>2026-09-29-mqtt-uplink-hmac-and-event-driven-realtime.md</code> (edge_collector vault) + trao đổi cross-session với <code>node-agent-86</code>/<code>pcmppdpod-odoo-78</code> qua <code>SendMessage</code> — bao gồm cả điều tra incident production PI-LINE1 (§8-10, cùng ngày, sau khi tài liệu này viết lần đầu). Phần <span class="badge verified">verified</span> grep lại được ngay trong repo này; phần <span class="badge reported">reported</span> cần mở repo tương ứng để xác nhận lại nếu cần chắc chắn 100%.</p>
+  </footer>
+
+</div>
+</body>
+</html>

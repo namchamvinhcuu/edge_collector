@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kiến trúc &amp; Vận hành Hệ thống Giám sát IoT</title>
+<style>
+  :root{
+    --ink:#1c2430;
+    --ink-soft:#4a5568;
+    --paper:#ffffff;
+    --paper-soft:#f5f7fa;
+    --line:#e2e6ec;
+    --accent:#0f5c4f;
+    --accent-soft:#e6f2ef;
+    --accent-strong:#0a3f37;
+    --warn:#9a5a12;
+    --warn-soft:#fdf1e0;
+    --danger:#8a2b2b;
+    --danger-soft:#fbeaea;
+    --ok:#1f7a4d;
+    --ok-soft:#e8f6ee;
+    --code-bg:#0f1720;
+    --code-ink:#d7e3f0;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --serif: Georgia, "Times New Roman", serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper-soft);
+    color:var(--ink);
+    font-family:var(--sans);
+    line-height:1.6;
+    font-size:15.5px;
+  }
+  .page{
+    max-width:920px;
+    margin:0 auto;
+    background:var(--paper);
+    padding:0 0 64px 0;
+    box-shadow:0 0 0 1px var(--line);
+  }
+  /* ---------- Cover ---------- */
+  .cover{
+    padding:56px 56px 40px 56px;
+    border-bottom:4px solid var(--accent);
+    background:linear-gradient(180deg,var(--accent-soft) 0%, var(--paper) 100%);
+  }
+  .cover .eyebrow{
+    font-family:var(--mono);
+    font-size:12.5px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color:var(--accent-strong);
+    margin:0 0 14px 0;
+  }
+  .cover h1{
+    font-family:var(--serif);
+    font-size:34px;
+    line-height:1.25;
+    margin:0 0 10px 0;
+    color:var(--ink);
+  }
+  .cover .subtitle{
+    font-size:17px;
+    color:var(--ink-soft);
+    margin:0 0 28px 0;
+    max-width:640px;
+  }
+  .cover .meta{
+    display:flex;
+    flex-wrap:wrap;
+    gap:28px;
+    font-size:13px;
+    color:var(--ink-soft);
+    border-top:1px solid var(--line);
+    padding-top:18px;
+  }
+  .cover .meta div b{
+    display:block;
+    color:var(--ink);
+    font-size:14px;
+    margin-bottom:2px;
+  }
+  /* ---------- Nav ---------- */
+  .toc{
+    padding:28px 56px;
+    background:var(--paper-soft);
+    border-bottom:1px solid var(--line);
+  }
+  .toc h2{
+    font-size:12.5px;
+    text-transform:uppercase;
+    letter-spacing:0.1em;
+    color:var(--ink-soft);
+    margin:0 0 14px 0;
+  }
+  .toc ol{
+    columns:2;
+    column-gap:40px;
+    margin:0;
+    padding-left:20px;
+  }
+  .toc li{margin-bottom:8px;}
+  .toc a{color:var(--accent-strong); text-decoration:none; font-size:14.5px;}
+  .toc a:hover{text-decoration:underline;}
+  /* ---------- Sections ---------- */
+  section{
+    padding:44px 56px 8px 56px;
+  }
+  section + section{border-top:1px solid var(--line);}
+  .section-num{
+    font-family:var(--mono);
+    color:var(--accent);
+    font-size:13px;
+    letter-spacing:0.05em;
+  }
+  h2{
+    font-family:var(--serif);
+    font-size:24px;
+    margin:4px 0 18px 0;
+    color:var(--ink);
+  }
+  h3{
+    font-size:16.5px;
+    margin:28px 0 10px 0;
+    color:var(--ink);
+    border-left:3px solid var(--accent);
+    padding-left:10px;
+  }
+  p{color:var(--ink-soft); margin:0 0 14px 0;}
+  strong{color:var(--ink);}
+  ul, ol{color:var(--ink-soft); padding-left:22px;}
+  li{margin-bottom:6px;}
+  code{
+    font-family:var(--mono);
+    background:var(--paper-soft);
+    border:1px solid var(--line);
+    border-radius:4px;
+    padding:1px 6px;
+    font-size:0.92em;
+    color:var(--accent-strong);
+  }
+  .callout{
+    display:flex;
+    gap:14px;
+    border-radius:8px;
+    padding:16px 18px;
+    margin:18px 0;
+    font-size:14.5px;
+  }
+  .callout .tag{
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    font-weight:700;
+    flex:none;
+    padding-top:1px;
+  }
+  .callout.ok{background:var(--ok-soft); color:#155c38;}
+  .callout.ok .tag{color:var(--ok);}
+  .callout.warn{background:var(--warn-soft); color:#7a4509;}
+  .callout.warn .tag{color:var(--warn);}
+  .callout.info{background:var(--accent-soft); color:var(--accent-strong);}
+  .callout.info .tag{color:var(--accent-strong);}
+  /* ---------- Architecture diagram ---------- */
+  .diagram{
+    display:flex;
+    align-items:stretch;
+    gap:0;
+    margin:24px 0 8px 0;
+    font-size:13px;
+    overflow-x:auto;
+  }
+  .diagram .col{
+    flex:1 1 0;
+    min-width:150px;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+  }
+  .diagram .arrowcol{
+    flex:0 0 46px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:var(--ink-soft);
+    font-size:20px;
+  }
+  .box{
+    border:1px solid var(--line);
+    border-radius:8px;
+    padding:12px 14px;
+    background:var(--paper);
+  }
+  .box.head{
+    background:var(--ink);
+    color:#fff;
+    font-weight:700;
+    text-align:center;
+    border:none;
+  }
+  .box .name{font-weight:700; color:var(--ink); margin-bottom:3px;}
+  .box .desc{color:var(--ink-soft); font-size:12.5px;}
+  .box.accent{border-color:var(--accent); background:var(--accent-soft);}
+  .diagram-caption{
+    font-size:12.5px;
+    color:var(--ink-soft);
+    font-style:italic;
+    margin-top:6px;
+  }
+  /* ---------- Steps ---------- */
+  .steps{margin:20px 0;}
+  .step{
+    display:flex;
+    gap:16px;
+    padding:14px 0;
+    border-top:1px solid var(--line);
+  }
+  .step:first-child{border-top:none;}
+  .step .n{
+    flex:none;
+    width:28px; height:28px;
+    border-radius:50%;
+    background:var(--accent);
+    color:#fff;
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--mono); font-size:13px; font-weight:700;
+  }
+  .step .body b{color:var(--ink); display:block; margin-bottom:3px; font-size:14.5px;}
+  .step .body p{margin:0; font-size:14px;}
+  /* ---------- Table ---------- */
+  table{
+    width:100%;
+    border-collapse:collapse;
+    margin:18px 0;
+    font-size:13.5px;
+  }
+  th, td{
+    text-align:left;
+    padding:10px 12px;
+    border-bottom:1px solid var(--line);
+    vertical-align:top;
+  }
+  th{
+    background:var(--paper-soft);
+    color:var(--ink);
+    font-size:12px;
+    text-transform:uppercase;
+    letter-spacing:0.04em;
+  }
+  td{color:var(--ink-soft);}
+  td code{white-space:nowrap;}
+  .pill{
+    display:inline-block;
+    padding:2px 9px;
+    border-radius:99px;
+    font-size:11.5px;
+    font-weight:700;
+    letter-spacing:0.02em;
+  }
+  .pill.ok{background:var(--ok-soft); color:#155c38;}
+  .pill.progress{background:var(--warn-soft); color:#7a4509;}
+  .pill.planned{background:var(--paper-soft); color:var(--ink-soft); border:1px solid var(--line);}
+  /* ---------- Timeline ---------- */
+  .timeline{margin:20px 0;}
+  .tl-item{
+    display:flex;
+    gap:18px;
+    padding-bottom:22px;
+    position:relative;
+  }
+  .tl-item:not(:last-child)::before{
+    content:"";
+    position:absolute;
+    left:5px; top:16px; bottom:0;
+    width:1px;
+    background:var(--line);
+  }
+  .tl-dot{
+    flex:none;
+    width:11px; height:11px;
+    border-radius:50%;
+    margin-top:5px;
+    background:var(--accent);
+  }
+  .tl-dot.progress{background:var(--warn);}
+  .tl-body b{color:var(--ink); font-size:14.5px;}
+  .tl-body p{margin:4px 0 0 0; font-size:13.8px;}
+  /* ---------- Footer ---------- */
+  footer{
+    padding:32px 56px 0 56px;
+    font-size:12.5px;
+    color:var(--ink-soft);
+  }
+  .glossary dt{font-weight:700; color:var(--ink); margin-top:10px;}
+  .glossary dd{margin:2px 0 0 0; color:var(--ink-soft);}
+  @media (max-width:720px){
+    .cover, .toc, section, footer{padding-left:22px; padding-right:22px;}
+    .toc ol{columns:1;}
+    .diagram{flex-direction:column;}
+    .diagram .arrowcol{transform:rotate(90deg); padding:4px 0;}
+  }
+  @media print{
+    body{background:#fff;}
+    .page{box-shadow:none; max-width:none;}
+    section{break-inside:avoid-page;}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="cover">
+    <p class="eyebrow">Tài liệu kỹ thuật — Bản chia sẻ khách hàng</p>
+    <h1>Kiến trúc &amp; Vận hành Hệ thống Giám sát Thiết bị IoT</h1>
+    <p class="subtitle">Mô tả cách hệ thống thu thập dữ liệu từ thiết bị sản xuất tại nhà máy, đảm bảo dữ liệu không bị mất khi mất mạng, và đồng bộ realtime lên nền tảng quản trị Odoo.</p>
+    <div class="meta">
+      <div><b>Phiên bản tài liệu</b>1.2</div>
+      <div><b>Ngày cập nhật</b>29/09/2026 (cập nhật: khắc phục lỗi hiếm gặp gây mất dữ liệu khi tải cao + giảm dữ liệu trùng lặp không cần thiết)</div>
+      <div><b>Phạm vi</b>Edge Collector · Node Agent / Firmware thiết bị · Odoo (module giám sát sản xuất)</div>
+      <div><b>Đối tượng đọc</b>Đội kỹ thuật / vận hành phía khách hàng</div>
+    </div>
+  </div>
+
+  <div class="toc">
+    <h2>Mục lục</h2>
+    <ol>
+      <li><a href="#tong-quan">Tổng quan hệ thống</a></li>
+      <li><a href="#kien-truc">Kiến trúc tổng thể</a></li>
+      <li><a href="#luong-du-lieu">Luồng dữ liệu đo lường realtime</a></li>
+      <li><a href="#toan-ven">Đảm bảo không mất dữ liệu</a></li>
+      <li><a href="#bao-mat">Bảo mật &amp; xác thực</a></li>
+      <li><a href="#tai-va-mo-rong">Khả năng chịu tải &amp; mở rộng</a></li>
+      <li><a href="#tin-cay">Độ tin cậy vận hành dài hạn</a></li>
+      <li><a href="#lo-trinh">Lộ trình cải tiến</a></li>
+      <li><a href="#thuat-ngu">Phụ lục — Bảng thuật ngữ</a></li>
+    </ol>
+  </div>
+
+  <!-- 1. TỔNG QUAN -->
+  <section id="tong-quan">
+    <p class="section-num">01</p>
+    <h2>Tổng quan hệ thống</h2>
+    <p>Hệ thống có nhiệm vụ thu thập dữ liệu đo lường (cân điện tử, cảm biến, tín hiệu PLC...) trực tiếp từ thiết bị sản xuất tại nhà máy, xử lý ngay tại chỗ (edge), và đồng bộ lên nền tảng quản trị sản xuất Odoo để hiển thị realtime và phục vụ báo cáo/điều hành.</p>
+    <p>Thiết kế theo nguyên tắc <strong>"durable-first"</strong>: mọi dữ liệu đo được ghi xuống ổ đĩa cục bộ TRƯỚC khi gửi đi. Nếu mất kết nối mạng giữa nhà máy và máy chủ Odoo, dữ liệu không bị mất — hệ thống tự động gửi lại khi kết nối được khôi phục.</p>
+    <div class="callout info">
+      <span class="tag">Vì sao quan trọng</span>
+      <div>Với môi trường sản xuất, gián đoạn mạng là điều khó tránh (đổi ISP, bảo trì switch, mất điện cục bộ). Kiến trúc này đảm bảo <strong>không có phép đo nào bị bỏ sót</strong> chỉ vì một khoảng thời gian mất kết nối.</div>
+    </div>
+  </section>
+
+  <!-- 2. KIẾN TRÚC -->
+  <section id="kien-truc">
+    <p class="section-num">02</p>
+    <h2>Kiến trúc tổng thể</h2>
+    <p>Hệ thống gồm 3 lớp độc lập, mỗi lớp có thể vận hành/khởi động lại riêng mà không ảnh hưởng lớp còn lại:</p>
+
+    <div class="diagram">
+      <div class="col">
+        <div class="box head">Thiết bị vật lý</div>
+        <div class="box"><div class="name">Cân điện tử / Cảm biến / PLC</div><div class="desc">Kết nối qua Modbus, OPC-UA, Serial, hoặc firmware nhúng (ESP32) gửi trực tiếp qua MQTT</div></div>
+      </div>
+      <div class="arrowcol">→</div>
+      <div class="col">
+        <div class="box head">Lớp Edge (tại nhà máy)</div>
+        <div class="box accent"><div class="name">Edge Collector</div><div class="desc">Đọc dữ liệu, ghi xuống ổ đĩa cục bộ (durable), xác thực thiết bị, đẩy lên Odoo theo lô</div></div>
+      </div>
+      <div class="arrowcol">→</div>
+      <div class="col">
+        <div class="box head">Nền tảng quản trị</div>
+        <div class="box"><div class="name">Odoo — Module giám sát sản xuất</div><div class="desc">Lưu trạng thái mới nhất từng kênh đo, hiển thị realtime, phục vụ báo cáo/điều hành</div></div>
+      </div>
+    </div>
+    <p class="diagram-caption">Chiều ngược lại (cấu hình, lệnh điều khiển) đi từ Odoo → Edge Collector → thiết bị, dùng cùng hạ tầng nhưng có cơ chế xác thực riêng — xem mục 5.</p>
+
+    <h3>Vai trò từng lớp</h3>
+    <table>
+      <tr><th>Lớp</th><th>Trách nhiệm</th><th>Đặc điểm</th></tr>
+      <tr>
+        <td><strong>Thiết bị / Firmware</strong></td>
+        <td>Đọc giá trị vật lý, gửi ngay khi có thay đổi</td>
+        <td>Kiến trúc hướng sự kiện (event-driven) — gửi ngay khi đọc được, không chờ chu kỳ cố định</td>
+      </tr>
+      <tr>
+        <td><strong>Edge Collector</strong></td>
+        <td>Chuẩn hoá dữ liệu, lưu đệm cục bộ, xác thực, đẩy lên Odoo theo lô có kiểm soát tải</td>
+        <td>Chạy tại chỗ trong mạng nhà máy (LAN), không phụ thuộc kết nối Internet để tiếp tục thu thập</td>
+      </tr>
+      <tr>
+        <td><strong>Odoo (nền tảng quản trị)</strong></td>
+        <td>Lưu trạng thái, hiển thị realtime, cảnh báo, báo cáo, quản lý cấu hình từ xa</td>
+        <td>Đẩy cập nhật tới giao diện người dùng qua kênh push (không cần người dùng bấm F5)</td>
+      </tr>
+    </table>
+  </section>
+
+  <!-- 3. LUỒNG DỮ LIỆU -->
+  <section id="luong-du-lieu">
+    <p class="section-num">03</p>
+    <h2>Luồng dữ liệu đo lường realtime</h2>
+    <p>Một giá trị đo đi qua các bước sau, mỗi bước được thiết kế để giảm độ trễ tới mức tối thiểu:</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="n">1</div>
+        <div class="body">
+          <b>Đọc giá trị tại thiết bị</b>
+          <p>Firmware/driver đọc giá trị ngay khi có (không polling theo chu kỳ cố định) và phát tín hiệu ngay lập tức, tương tự cơ chế "ngắt" phần cứng.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <div class="body">
+          <b>Gửi lên Edge Collector</b>
+          <p>Kiến trúc hướng sự kiện: mỗi giá trị mới kích hoạt gửi ngay (qua MQTT hoặc HTTP tại chỗ), không đợi hết một khoảng thời gian cố định rồi mới gửi theo lô — đây là điểm vừa được tối ưu để loại bỏ độ trễ "chờ theo chu kỳ" không cần thiết.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <div class="body">
+          <b>Ghi đệm bền vững (durable) tại Edge</b>
+          <p>Dữ liệu được ghi xuống cơ sở dữ liệu cục bộ trước khi gửi đi tiếp — đảm bảo không mất dữ liệu nếu quá trình gửi lên Odoo gặp sự cố ngay sau đó.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">4</div>
+        <div class="body">
+          <b>Đẩy lên Odoo theo lô có kiểm soát</b>
+          <p>Edge gửi dữ liệu lên Odoo theo lô nhỏ, với giới hạn số kết nối đồng thời phù hợp — tránh làm quá tải máy chủ khi có nhiều thiết bị/nhà máy cùng gửi một lúc.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">5</div>
+        <div class="body">
+          <b>Cập nhật &amp; hiển thị trên Odoo</b>
+          <p>Odoo ghi nhận giá trị mới nhất và chủ động đẩy cập nhật tới giao diện người dùng đang mở (qua kênh push hai chiều), thay vì để trình duyệt tự làm mới định kỳ.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout ok">
+      <span class="tag">Kết quả đo được</span>
+      <div>Sau đợt tối ưu gần nhất, tổng độ trễ từ lúc thiết bị đổi giá trị tới lúc hiển thị trên Odoo đã giảm đáng kể so với thiết kế theo chu kỳ cố định trước đây, nhờ loại bỏ các điểm "chờ" không cần thiết ở cả 3 lớp.</div>
+    </div>
+  </section>
+
+  <!-- 4. TOÀN VẸN DỮ LIỆU -->
+  <section id="toan-ven">
+    <p class="section-num">04</p>
+    <h2>Đảm bảo không mất dữ liệu</h2>
+    <p>Nguyên tắc cốt lõi: <strong>không có phép đo nào rời khỏi Edge Collector mà chưa được ghi bền vững trước đó.</strong></p>
+
+    <h3>Cơ chế hàng đợi bền vững (outbox)</h3>
+    <ul>
+      <li>Mọi giá trị đo được ghi vào một hàng đợi lưu trữ cục bộ trước khi gửi lên Odoo.</li>
+      <li>Nếu gửi thất bại (mất mạng, Odoo tạm ngừng bảo trì...), bản ghi vẫn nằm nguyên trong hàng đợi và được thử gửi lại ở vòng kế tiếp — không cần can thiệp thủ công.</li>
+      <li>Bản ghi chỉ bị xoá khỏi hàng đợi SAU KHI nhận được xác nhận thành công từ Odoo.</li>
+    </ul>
+
+    <h3>Xử lý lỗi từng phần tử, không huỷ cả lô</h3>
+    <p>Khi Odoo nhận một lô nhiều giá trị đo, nếu một giá trị trong đó gặp lỗi (dữ liệu bất thường, ràng buộc nghiệp vụ...), hệ thống chỉ ghi nhận lỗi cho đúng giá trị đó — các giá trị còn lại trong cùng lô vẫn được xử lý bình thường, không bị ảnh hưởng dây chuyền.</p>
+
+    <h3>Cơ chế xử lý lại cho dữ liệu lỗi</h3>
+    <p>Với các giá trị đo bị lỗi ở tầng Odoo (ví dụ dữ liệu không hợp lệ), hệ thống tự động thử xử lý lại theo lịch trình cố định trong vài lần; nếu vẫn không thành công, bản ghi được đưa vào danh sách "cần người kiểm tra" kèm cảnh báo trực quan ngay trên màn hình quản lý thiết bị liên quan — đảm bảo không có dữ liệu nào "biến mất âm thầm" mà không ai biết. Dữ liệu lỗi được giữ lại đủ lâu để người vận hành xem xét trước khi dọn dẹp tự động.</p>
+
+    <div class="callout ok">
+      <span class="tag">Đã khắc phục (29/09)</span>
+      <div>Phát hiện và xử lý dứt điểm một tình huống hiếm gặp: khi tải ghi dữ liệu tăng đột biến cùng lúc trên nhiều thiết bị, một lỗi tranh chấp ghi ở tầng cơ sở dữ liệu Odoo có thể lan sang các bước xử lý phía sau trong CÙNG một yêu cầu — kể cả bước "ghi nhận lỗi để xử lý lại" — khiến một số phép đo không được lưu ở bất kỳ đâu. Đã cô lập đúng bước gây tranh chấp thành một đơn vị xử lý riêng biệt: khi phát hiện tranh chấp, hệ thống báo cho Edge Collector giãn nhịp gửi lại ngay (xem cơ chế "hạ nhiệt" bên dưới) thay vì để lỗi lan rộng — dữ liệu không còn nguy cơ mất trong tình huống này.</div>
+    </div>
+  </section>
+
+  <!-- 5. BẢO MẬT -->
+  <section id="bao-mat">
+    <p class="section-num">05</p>
+    <h2>Bảo mật &amp; xác thực</h2>
+    <p>Hệ thống áp dụng xác thực riêng cho từng chiều giao tiếp, phù hợp với đặc điểm rủi ro của từng kênh:</p>
+
+    <table>
+      <tr><th>Kênh giao tiếp</th><th>Cơ chế xác thực</th><th>Ghi chú</th></tr>
+      <tr>
+        <td>Thiết bị → Edge Collector (mạng nội bộ nhà máy)</td>
+        <td>Mã định danh thiết bị + khoá truy cập được cấp phát tự động lần đầu kết nối</td>
+        <td>Khoá được cấp bởi Odoo, thiết bị tự học khi kết nối lần đầu</td>
+      </tr>
+      <tr>
+        <td>Thiết bị → Edge Collector (qua giao thức nhắn tin MQTT)</td>
+        <td>Ký số toàn vẹn dữ liệu bằng khoá riêng từng thiết bị (thuật toán HMAC-SHA256)</td>
+        <td>Áp dụng dần trên toàn bộ dòng thiết bị theo hướng tương thích ngược, không gián đoạn thiết bị đang vận hành trong lúc chuyển đổi</td>
+      </tr>
+      <tr>
+        <td>Edge Collector → Odoo</td>
+        <td>Mã định danh Edge + khoá API riêng cho từng site</td>
+        <td>Mỗi nhà máy/site có mã định danh và khoá riêng biệt</td>
+      </tr>
+      <tr>
+        <td>Odoo → Edge Collector (cấu hình / lệnh điều khiển)</td>
+        <td>Xác thực bằng mã định danh Edge</td>
+        <td>Giới hạn trong mạng nội bộ nhà máy, không mở ra Internet công cộng</td>
+      </tr>
+    </table>
+
+    <div class="callout warn">
+      <span class="tag">Nguyên tắc thận trọng</span>
+      <div>Mọi lệnh ghi trực tiếp xuống thiết bị vật lý (ví dụ: zero cân, đóng/mở relay) đều yêu cầu xác nhận rõ ràng trước khi thực thi — hệ thống được thiết kế để <strong>không tự động thực hiện thao tác có ảnh hưởng vật lý</strong> nếu chưa qua bước xác nhận.</div>
+    </div>
+  </section>
+
+  <!-- 6. TẢI & MỞ RỘNG -->
+  <section id="tai-va-mo-rong">
+    <p class="section-num">06</p>
+    <h2>Khả năng chịu tải &amp; mở rộng</h2>
+    <p>Hệ thống được thiết kế để mở rộng thêm nhà máy/thiết bị mà không cần thay đổi kiến trúc, thông qua các cơ chế sau:</p>
+
+    <h3>Giới hạn tải có kiểm soát</h3>
+    <ul>
+      <li><strong>Gửi song song có giới hạn:</strong> Edge Collector gửi dữ liệu của nhiều thiết bị đồng thời nhưng có trần số lượng kết nối cùng lúc lên Odoo, tránh làm nghẽn máy chủ trung tâm khi số lượng nhà máy tăng.</li>
+      <li><strong>Gộp dữ liệu trùng lặp:</strong> nếu nhiều giá trị đo của cùng một kênh dồn lại trong một lô gửi, hệ thống tối ưu số lượt ghi xuống cơ sở dữ liệu mà không làm mất bất kỳ giá trị nào.</li>
+      <li><strong>Giảm tần suất ghi trạng thái không cần thiết:</strong> các cập nhật trạng thái mang tính chất "còn sống" (không phải dữ liệu đo) được gộp lại theo ngưỡng thời gian, giảm tải cho cơ sở dữ liệu khi có nhiều thiết bị cùng gửi liên tục.</li>
+    </ul>
+
+    <h3>Cơ chế "hạ nhiệt" khi quá tải</h3>
+    <p>Khi Odoo phát hiện đang quá tải cục bộ, hệ thống chủ động báo cho Edge Collector biết để giãn nhịp gửi trong một khoảng thời gian, sau đó tự động tăng dần tốc độ gửi trở lại khi tải giảm — tránh tình trạng "dồn toa" khi máy chủ vừa phục hồi sau sự cố mà nhiều nhà máy cùng gửi bù dữ liệu tồn đọng cùng lúc. Cơ chế giãn nhịp áp dụng riêng cho từng thiết bị, nên một thiết bị đang phải chờ không ảnh hưởng tới tốc độ của các thiết bị khác.</p>
+
+    <h3>Chỉ gửi dữ liệu khi có thay đổi thật sự</h3>
+    <p>Một số thiết bị (ví dụ cân điện tử) có thể giữ nguyên giá trị trong thời gian dài khi sản phẩm để yên trên cân — nếu gửi lặp lại giá trị y hệt liên tục, dữ liệu vô ích sẽ chiếm chỗ của những giá trị THẬT SỰ mới, làm chậm đúng lúc cần hiển thị nhanh nhất (khi đặt/lấy sản phẩm). Hệ thống nay chỉ gửi lên Odoo khi giá trị thực sự thay đổi, kèm một nhịp "vẫn đang hoạt động" định kỳ (khoảng thời gian riêng theo từng loại cảm biến) để đảm bảo màn hình không hiển thị sai là "mất kết nối" khi thiết bị chỉ đơn giản là đang ổn định. Các loại dữ liệu mang tính đếm dồn (ví dụ đếm số sản phẩm đi qua) hoặc cần ghi nhận đầy đủ mọi lần đọc vẫn được gửi đầy đủ như cũ, không bị ảnh hưởng bởi cơ chế này.</p>
+  </section>
+
+  <!-- 7. TIN CẬY VẬN HÀNH -->
+  <section id="tin-cay">
+    <p class="section-num">07</p>
+    <h2>Độ tin cậy vận hành dài hạn</h2>
+    <ul>
+      <li><strong>Tự phục hồi sau lỗi mạng:</strong> mọi thành phần đều có cơ chế tự kết nối lại và tiếp tục từ đúng điểm dừng, không cần khởi động lại thủ công.</li>
+      <li><strong>Giám sát tình trạng thiết bị:</strong> Odoo theo dõi trạng thái "còn sống" của từng Edge/thiết bị theo thời gian thực, phát hiện sớm khi có thiết bị ngừng phản hồi.</li>
+      <li><strong>Nhật ký vận hành:</strong> mọi lỗi và sự kiện quan trọng đều được ghi log bền vững (không chỉ hiện trên màn hình console), phục vụ tra cứu khi cần điều tra sự cố về sau.</li>
+      <li><strong>Không có điểm nghẽn đơn lẻ mất dữ liệu:</strong> nhờ nguyên tắc durable-first (mục 4), một sự cố ở lớp Odoo hoặc mạng WAN không làm gián đoạn việc thu thập dữ liệu tại nhà máy.</li>
+    </ul>
+  </section>
+
+  <!-- 8. LỘ TRÌNH -->
+  <section id="lo-trinh">
+    <p class="section-num">08</p>
+    <h2>Lộ trình cải tiến</h2>
+    <p>Các hạng mục dưới đây thuộc đợt tối ưu gần nhất, tập trung vào tốc độ hiển thị realtime, khả năng chịu tải, và độ tin cậy dữ liệu dài hạn.</p>
+
+    <div class="timeline">
+      <div class="tl-item">
+        <div class="tl-dot"></div>
+        <div class="tl-body">
+          <b>Chuyển sang kiến trúc hướng sự kiện thật (event-driven) <span class="pill ok">Hoàn tất</span></b>
+          <p>Loại bỏ độ trễ do chờ theo chu kỳ cố định ở tầng thu thập tại thiết bị — mọi giá trị mới được gửi ngay khi đọc được, thay vì gộp theo khoảng thời gian rồi mới gửi.</p>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-dot"></div>
+        <div class="tl-body">
+          <b>Ký số toàn vẹn dữ liệu qua kênh MQTT <span class="pill ok">Hoàn tất</span></b>
+          <p>Bổ sung lớp xác thực bằng chữ ký số cho dữ liệu gửi qua giao thức nhắn tin, tương thích ngược với các thiết bị đang vận hành để không gây gián đoạn.</p>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-dot"></div>
+        <div class="tl-body">
+          <b>Tối ưu ghi nhận dữ liệu tại tầng quản trị <span class="pill ok">Hoàn tất</span></b>
+          <p>Giảm tải ghi cơ sở dữ liệu khi nhiều thiết bị gửi đồng thời, đồng thời đảm bảo lỗi ở một giá trị đo không ảnh hưởng tới các giá trị khác trong cùng lô gửi.</p>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-dot"></div>
+        <div class="tl-body">
+          <b>Cơ chế "hạ nhiệt" khi hệ thống quá tải <span class="pill ok">Hoàn tất</span></b>
+          <p>Tầng quản trị chủ động điều tiết tốc độ gửi của từng Edge Collector khi phát hiện quá tải, và tự phục hồi nhịp gửi bình thường khi tải giảm — áp dụng riêng theo từng thiết bị, không ảnh hưởng chéo.</p>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-dot"></div>
+        <div class="tl-body">
+          <b>Cơ chế xử lý dữ liệu lỗi tự động <span class="pill ok">Hoàn tất</span></b>
+          <p>Tự động thử lại các giá trị đo bị lỗi theo lịch trình cố định; nếu vẫn không xử lý được, hệ thống hiển thị cảnh báo trực quan ngay trên màn hình quản lý thiết bị liên quan để người vận hành xử lý thủ công.</p>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-dot"></div>
+        <div class="tl-body">
+          <b>Khắc phục lỗi hiếm gặp gây mất dữ liệu khi tải cao <span class="pill ok">Hoàn tất</span></b>
+          <p>Phát hiện qua giám sát thực tế trên site sản xuất: khi nhiều thiết bị gửi dữ liệu dồn dập cùng lúc, một tranh chấp ghi ở tầng cơ sở dữ liệu có thể lan sang cả bước "ghi nhận lỗi để xử lý lại", khiến một số phép đo không được lưu ở đâu cả. Đã cô lập đúng điểm gây tranh chấp — hệ thống giờ chủ động giãn nhịp gửi ngay khi phát hiện, thay vì để lỗi lan rộng.</p>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-dot"></div>
+        <div class="tl-body">
+          <b>Giảm dữ liệu trùng lặp khi thiết bị đứng yên lâu <span class="pill ok">Hoàn tất</span></b>
+          <p>Với các thiết bị có thể giữ nguyên giá trị trong thời gian dài (cân điện tử, cảm biến nhiệt độ/độ ẩm...), hệ thống nay chỉ gửi lên Odoo khi giá trị thực sự thay đổi, kèm nhịp "vẫn đang hoạt động" định kỳ để không hiển thị sai là mất kết nối. Dữ liệu đếm dồn (ví dụ đếm sản phẩm) vẫn được ghi nhận đầy đủ mọi lần như trước.</p>
+        </div>
+      </div>
+    </div>
+    <div class="callout ok">
+      <span class="tag">Trạng thái hiện tại</span>
+      <div>Toàn bộ các hạng mục trong lộ trình đợt này đã hoàn tất và đang được đưa vào vận hành.</div>
+    </div>
+  </section>
+
+  <!-- PHỤ LỤC -->
+  <section id="thuat-ngu">
+    <p class="section-num">Phụ lục</p>
+    <h2>Bảng thuật ngữ</h2>
+    <dl class="glossary">
+      <dt>Edge Collector</dt>
+      <dd>Phần mềm chạy tại nhà máy (mạng nội bộ), đóng vai trò cầu nối giữa thiết bị vật lý và nền tảng quản trị trung tâm.</dd>
+      <dt>Durable-first</dt>
+      <dd>Nguyên tắc thiết kế: luôn ghi dữ liệu xuống lưu trữ bền vững trước khi thực hiện bất kỳ thao tác gửi đi nào có thể thất bại.</dd>
+      <dt>Hàng đợi bền vững (outbox)</dt>
+      <dd>Cơ chế lưu tạm dữ liệu chờ gửi, đảm bảo không mất dữ liệu khi gửi thất bại; chỉ xoá sau khi có xác nhận thành công.</dd>
+      <dt>Kiến trúc hướng sự kiện (event-driven)</dt>
+      <dd>Mô hình xử lý: hành động được kích hoạt ngay khi có sự kiện xảy ra, thay vì kiểm tra định kỳ theo chu kỳ cố định — giúp giảm độ trễ.</dd>
+      <dt>MQTT</dt>
+      <dd>Giao thức nhắn tin nhẹ, phổ biến cho thiết bị IoT, cho phép gửi dữ liệu tức thời khi có thay đổi.</dd>
+      <dt>Ký số toàn vẹn dữ liệu (HMAC)</dt>
+      <dd>Kỹ thuật đảm bảo dữ liệu không bị chỉnh sửa trên đường truyền và đến từ đúng thiết bị đã được xác thực.</dd>
+    </dl>
+  </section>
+
+  <footer>
+    <p>Tài liệu này mô tả kiến trúc kỹ thuật ở mức tổng quan phục vụ trao đổi giữa hai bên. Chi tiết triển khai cụ thể tại từng site có thể được điều chỉnh theo yêu cầu thực tế.</p>
+  </footer>
+
+</div>
+</body>
+</html>
