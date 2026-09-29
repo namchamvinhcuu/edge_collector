@@ -42,6 +42,11 @@ class SourceManager:
         self._drivers: dict[str, SourceDriver] = {}
         self._source_rev: dict[str, int] = {}
         self._route: dict[tuple, str] = {}          # (serial, ch) -> source code
+        # (serial, ch) -> {"max_age_ms": int|None, "must_send_every": bool}. Odoo
+        # tinh must_send_every = raw_forward or write_mode=='add' or bool(trigger_ids)
+        # (contract chot 2026-09-29 voi pcm_base) - thieu field/khong ro -> mac dinh
+        # True (an toan, giu hanh vi gui-moi-lan cu) o channel_meta_for() ben duoi.
+        self._channel_meta: dict[tuple, dict] = {}
 
         self._node_last_seen: dict[str, float] = {}
         self._node_queues: dict[str, "asyncio.Queue"] = {}
@@ -54,6 +59,13 @@ class SourceManager:
 
     def device_meta(self, serial: str) -> dict:
         return self.devices_by_serial.get(serial) or {}
+
+    def channel_meta_for(self, serial: str, ch_code: str) -> dict:
+        """max_age_ms/must_send_every cho 1 channel - dung o EdgeAgent._on_value()
+        de quyet dinh co loc-trung/heartbeat duoc khong (xem _channel_meta)."""
+        return self._channel_meta.get((serial, ch_code)) or {
+            "max_age_ms": None, "must_send_every": True,
+        }
 
     def known_serials(self) -> list:
         return list(self.devices_by_serial.keys())
@@ -83,13 +95,25 @@ class SourceManager:
 
         channels_by_source: dict = {}
         route: dict = {}
+        channel_meta: dict = {}
         for dev in cfg.get("devices") or []:
             for ch in dev.get("channels") or []:
                 src_code = ch.get("source")
                 if src_code:
                     channels_by_source.setdefault(src_code, []).append(ch)
                     route[(dev["serial"], ch["code"])] = src_code
+                # Chuan hoa None -> True O DAY (khong phai o noi doc): .get(key, True)
+                # chi ap default khi key VANG MAT, con key co mat voi value None (vd
+                # Odoo serialize JSON null) se lot qua thanh None (falsy) - danger that
+                # cho channel counter/trigger/raw-forward - xem finding python-reviewer
+                # 2026-09-29.
+                me = ch.get("must_send_every")
+                channel_meta[(dev["serial"], ch["code"])] = {
+                    "max_age_ms": ch.get("max_age_ms"),
+                    "must_send_every": True if me is None else bool(me),
+                }
         self._route = route
+        self._channel_meta = channel_meta
 
         wanted = {s["code"]: s for s in (cfg.get("sources") or []) if s.get("kind") not in
                   ("edge", "http_node")}

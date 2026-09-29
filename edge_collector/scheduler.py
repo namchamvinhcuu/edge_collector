@@ -39,6 +39,10 @@ class EdgeAgent:
         # poll khi khong.
         self.manager.mqtt_cmd = self.mqtt_consumer
         self._pending: dict = {}          # serial -> list[item dict], cho tung dot flush
+        # (serial, ch) -> {"v","s","q","stable","ts"} lan gan nhat DA enqueue len
+        # outbox (khac history - history luon ghi moi lan doc). Dung cho
+        # change-detection o _on_value(): xem DEFAULT_HEARTBEAT_S.
+        self._last_enqueued: dict = {}
         self._boot_id = self.store.kv_get("boot_id")
         if not self._boot_id:
             self._boot_id = uuid.uuid4().hex
@@ -53,16 +57,54 @@ class EdgeAgent:
         self._backoff_until: dict = {}   # serial -> time.monotonic() duoc phep gui lai
         self._backoff_delay: dict = {}   # serial -> delay hien tai (s), tang dan
 
+    # 29/09 (contract chot voi pcm_base): channel co must_send_every=False (khong
+    # phai counter/trigger/raw-forward - xem manager.channel_meta_for()) duoc phep
+    # BO QUA enqueue-len-Odoo khi gia tri/quality/stable y het lan gui truoc (vd
+    # can dien tu dung yen lau, tranh flood outbox - xem Fix-History 2026-09-29).
+    # Van GUI LAI dinh ky theo max_age_ms*0.5 cua channel do (rieng tung channel,
+    # KHONG dung 1 hang so chung - nguong lech nhau nhieu giua cac loai sensor)
+    # de UI Odoo khong hien "khong doi" qua lau. Thieu/sai max_age_ms -> fallback
+    # DEFAULT_HEARTBEAT_S. history_insert_many() (local, Live activity) KHONG bi
+    # anh huong - van ghi MOI lan doc nhu cu.
+    DEFAULT_HEARTBEAT_S = 5.0
+
+    def _should_skip_duplicate(self, serial, ch, v, s, q, stable) -> bool:
+        meta = self.manager.channel_meta_for(serial, ch)
+        if meta.get("must_send_every", True):
+            return False
+        key = (serial, ch)
+        now = time.monotonic()
+        prev = self._last_enqueued.get(key)
+        qn = int(q or 0)
+        same = (prev is not None and stable and prev["stable"]
+                and v == prev["v"] and s == prev["s"] and qn == prev["q"])
+        max_age_ms = meta.get("max_age_ms")
+        heartbeat_s = (max_age_ms / 1000.0 * 0.5
+                       if isinstance(max_age_ms, (int, float)) and max_age_ms > 0
+                       else self.DEFAULT_HEARTBEAT_S)
+        if same and (now - prev["ts"]) < heartbeat_s:
+            return True
+        self._last_enqueued[key] = {"v": v, "s": s, "q": qn, "stable": stable, "ts": now}
+        return False
+
     # ------------------------------------------------------------------
     # driver -> day gia tri vao buffer cho serial do (chua gui ngay)
     # ------------------------------------------------------------------
     def _on_value(self, serial, ch, v, s, q, ts, stable):
+        try:
+            self.store.history_insert_many([(serial, ch, ts or time.time(), v, s, int(q or 0),
+                                             1 if stable else 0)])
+        except Exception:                                            # noqa: BLE001
+            # history la phu tro cho Live activity local - loi o day KHONG duoc
+            # phep chan duong outbox/Odoo (durable-first, xem finding python-reviewer
+            # 2026-09-29: dao thu tu truoc do vo tinh lam mat ca outbox neu history throw).
+            _logger.exception("loi ghi history cho %s/%s", serial, ch)
+        if self._should_skip_duplicate(serial, ch, v, s, q, stable):
+            return
         item = {"ch": ch, "v": v, "s": s, "q": int(q or 0), "stable": stable}
         if ts is not None:
             item["ts"] = int(ts * 1000)
         self._pending.setdefault(serial, []).append(item)
-        self.store.history_insert_many([(serial, ch, ts or time.time(), v, s, int(q or 0),
-                                         1 if stable else 0)])
 
     def push_node_reading(self, serial, ch, v, s, q, ts, stable):
         """Loi vao tu node_api.py (node HTTP day thang, kind=http_node) — cung
