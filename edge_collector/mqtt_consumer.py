@@ -435,6 +435,54 @@ class MqttConsumer:
                                                payload.get("channel"), payload.get("value")))
         return True
 
+    async def publish_raw(self, topic: str, payload: str, wait_s: float = 2.0) -> dict:
+        """Publish cho /api/publish (node mqtt_publish của ppd_process).
+        QoS 1, không retain, KHÔNG xếp hàng khi mất broker: NO_CONN mà gói
+        chưa từng gửi thì rút khỏi paho (paho sẽ tự gửi muộn khi reconnect -
+        xem cancel_pending). Chờ PUBACK tối đa wait_s - nhỏ hơn timeout 3s của
+        Odoo edge_client; quá hạn -> "unknown", gói để paho tự xử lý tiếp."""
+        # "reason" máy đọc được cho Odoo - xem inbound_api._publish_error.
+        down = {"ok": False, "status": "error", "reason": "broker_down",
+                "error": "broker not connected"}
+        no_puback = {"ok": False, "status": "unknown", "reason": "no_puback"}
+        if not (self._cli and self._connected):
+            return down
+        try:
+            info = self._cli.publish(topic, payload, qos=1)
+        except Exception as exc:                                  # noqa: BLE001
+            _logger.warning("publish %s thất bại: %s", topic, exc)
+            return dict(down, error=str(exc)[:200])
+        if info.rc == mqtt.MQTT_ERR_NO_CONN:
+            # Giữa publish() và lúc giành lại mutex, paho có thể đã reconnect
+            # và gửi đi: chỉ báo "chưa gửi" khi gói vẫn ở state publish, dup=False.
+            with self._cli._out_message_mutex:      # paho 1.6.1, xem cancel_pending
+                msg = self._cli._out_messages.get(info.mid)
+                never_sent = (msg is not None and msg.state == mqtt.mqtt_ms_publish
+                              and not msg.dup)
+                if never_sent:
+                    del self._cli._out_messages[info.mid]
+            if never_sent:
+                return down
+            return dict(no_puback, error="mất kết nối broker lúc gửi - có thể đã gửi")
+        if info.rc != mqtt.MQTT_ERR_SUCCESS:
+            return dict(down, error="publish rc=%s" % info.rc)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + wait_s
+        while not info.is_published():
+            if loop.time() >= deadline:
+                # KHÔNG rút gói ở đây: gói đã lên dây (wait_for_puback) được paho
+                # tính vào _inflight_messages, xoá tay làm rò bộ đếm -> đủ 20 lần
+                # thì MỌI publish QoS1 (kể cả publish_command lệnh thiết bị) kẹt ở
+                # state queued tới khi reconnect (paho 1.6.1 client.py:1286-1299,
+                # 3498-3534). Gói có thể tới muộn - chấp nhận vì allowlist chỉ cho
+                # topic không điều khiển; status "unknown" đã nói "có thể đã gửi".
+                _logger.warning("publish %s: chưa có PUBACK sau %.0fs", topic, wait_s)
+                return dict(no_puback, error="chưa nhận PUBACK từ broker - có thể đã gửi")
+            await asyncio.sleep(0.05)
+        _logger.info("publish %s (%d byte)", topic, len(payload.encode()))
+        self._log_event("down", topic, len(payload.encode()), "publish từ Odoo")
+        return {"ok": True, "status": "ok"}
+
     def cancel_pending(self, cmd_id) -> bool:
         """Rút lệnh mà paho còn GIỮ chờ reconnect (NO_CONN, chưa ra khỏi tiến
         trình). True = đã rút, chắc chắn node không nhận; False = không có hoặc

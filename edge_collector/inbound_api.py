@@ -5,6 +5,7 @@
     POST /api/browse        duyệt tag của một nguồn (OPC UA/Modbus...)
     POST /api/source/test   thử kết nối một cấu hình nguồn
     GET  /api/stats         thống kê lịch sử cục bộ (mẫu, tỷ lệ lỗi, stale)
+    POST /api/publish       publish MQTT tùy ý (node mqtt_publish), cấm topic lệnh
 
 Xác thực (từ 2026-10-02, Nam duyệt - trước đây chỉ log warning, coi là LAN):
 mọi /api/* đi qua _require_downlink_auth (dependency của router - path mới
@@ -24,6 +25,7 @@ Vẫn nên chặn tường lửa cho cổng này.
 import collections
 import hashlib
 import hmac
+import json
 import logging
 import time
 from typing import Optional
@@ -248,3 +250,91 @@ async def api_stats(request: Request, serial: str = "", ch: str = "", hours: flo
     stats = store.history_stats(serial, ch, since_ts)
     stats["minutes"] = int(hours * 60)
     return dict(stats, ok=True)
+
+
+_PUBLISH_MAX_BYTES = 4096
+_TOPIC_MAX_CHARS = 256
+
+
+def _under(topic: str, prefix: str) -> bool:
+    """So theo LEVEL: "a/b" phủ "a/b" và "a/b/..." nhưng không phủ "a/bc".
+    Không dùng startswith thô: thiết bị subscribe "a/b/#" cũng nhận "a/b"."""
+    p = prefix.rstrip("/")
+    return bool(p) and (topic == p or topic.startswith(p + "/"))
+
+
+def _allowed_topic_prefixes() -> list:
+    return [p.strip() for p in (settings.publish_topic_allow or "").split(",") if p.strip()]
+
+
+def _reserved_topic_prefixes(manager) -> list:
+    """Lớp chặn PHỤ (allowlist mới là lớp chính - review-rules.json): gốc
+    giao thức node "fms" (cứng, kể cả khi EDGE_MQTT_CONSUMER_TOPIC có gốc
+    wildcard), gốc consumer đang cấu hình, và gốc của mọi nguồn MQTT đang
+    chạy (dưới đó vừa là lệnh <gốc>/cmd/, vừa là số đo <gốc>/#)."""
+    root = (settings.mqtt_consumer_topic or "").split("/")[0]
+    prefixes = ["fms"]
+    if root and not any(c in root for c in ("+", "#")):
+        prefixes.append(root)
+    return prefixes + manager.mqtt_topic_bases()
+
+
+def _publish_payload(raw) -> str:
+    """str giữ nguyên; None -> ""; còn lại (số, bool, dict, list) -> JSON."""
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw
+    return json.dumps(raw, ensure_ascii=False)
+
+
+@router.post("/api/publish")
+async def api_publish(request: Request):
+    """Publish MQTT cho node `mqtt_publish` của ppd_process (Nam duyệt
+    2026-10-02). Ký HMAC như mọi /api/* (router dependency). Topic phải khớp
+    EDGE_PUBLISH_TOPIC_ALLOW (rỗng = tắt) VÀ không khớp _reserved_topic_prefixes."""
+    body, err = await _read_json(request)
+    if err:
+        return err
+    allow = _allowed_topic_prefixes()
+    if not allow:
+        return _publish_error("publish_disabled", "publish bị tắt (EDGE_PUBLISH_TOPIC_ALLOW rỗng)")
+    topic = body.get("topic")
+    if not isinstance(topic, str) or not topic:
+        return _publish_error("invalid_topic", "thiếu topic")
+    try:
+        topic.encode("utf-8")
+    except UnicodeEncodeError:
+        return _publish_error("invalid_topic", "topic không mã hóa được UTF-8")
+    if (len(topic) > _TOPIC_MAX_CHARS or topic.startswith(("/", "$"))
+            or any(c in topic for c in ("+", "#", "\x00"))):
+        return _publish_error("invalid_topic", "topic không hợp lệ")
+    manager = request.app.state.manager
+    if (any(_under(topic, p) for p in _reserved_topic_prefixes(manager))
+            or not any(_under(topic, p) for p in allow)):
+        _log_request("/api/publish", topic=topic, rejected="not allowed")
+        return _publish_error("topic_not_allowed",
+                              "topic không được phép (ngoài EDGE_PUBLISH_TOPIC_ALLOW "
+                              "hoặc là topic thiết bị - lệnh phải qua /api/command)")
+    payload = _publish_payload(body.get("payload"))
+    try:
+        size = len(payload.encode("utf-8"))
+    except UnicodeEncodeError:
+        return _publish_error("invalid_payload", "payload không mã hóa được UTF-8")
+    if size > _PUBLISH_MAX_BYTES:
+        return _publish_error("payload_too_large",
+                              "payload %d byte vượt %d" % (size, _PUBLISH_MAX_BYTES))
+    _log_request("/api/publish", topic=topic, size=size)
+    mq = getattr(manager, "mqtt_cmd", None)
+    # scheduler luôn gán mqtt_cmd kể cả khi consumer tắt -> phải xem cờ cấu
+    # hình, nếu không publish_raw sẽ trả broker_down (Odoo coi là retry được).
+    if mq is None or not settings.mqtt_consumer_enabled:
+        return _publish_error("publish_disabled", "MQTT consumer chưa bật trên edge")
+    return await mq.publish_raw(topic, payload)
+
+
+def _publish_error(reason: str, error: str) -> dict:
+    """`reason` máy đọc được - Odoo map: publish_disabled/topic_not_allowed/
+    invalid_topic/invalid_payload/payload_too_large = lỗi cấu hình (không retry);
+    broker_down = retry được; status "unknown" (reason no_puback) = có thể đã gửi."""
+    return {"ok": False, "status": "error", "reason": reason, "error": error}

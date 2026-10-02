@@ -79,10 +79,18 @@ class MqttDriver(SourceDriver):
         except ValueError:
             self._emit(code, s=text, q=0, stable=True)
 
+    def topic_base(self) -> str:
+        """Gốc topic của nguồn này: subscribe <gốc>/# làm số đo, lệnh đi
+        <gốc>/cmd/<kênh>. inbound_api /api/publish cấm publish dưới gốc này
+        (vừa đi vòng /api/command, vừa giả được số đo)."""
+        return self.cfg.get("topic_base") or "factory"
+
+    def cmd_topic_prefix(self) -> str:
+        return "%s/cmd/" % self.topic_base()
+
     async def command(self, channel_code: str, cmd: str, value=None) -> dict:
         if not self._cli:
             return {"ok": False, "error": "mqtt chưa kết nối"}
-        base = self.cfg.get("topic_base") or "factory"
         payload = value if value is not None else cmd
-        self._cli.publish("%s/cmd/%s" % (base, channel_code), str(payload))
+        self._cli.publish(self.cmd_topic_prefix() + channel_code, str(payload))
         return {"ok": True, "status": "ok"}

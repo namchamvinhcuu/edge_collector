@@ -87,6 +87,10 @@ class SourceManager:
     def get_driver(self, source_code: str) -> Optional[SourceDriver]:
         return self._drivers.get(source_code)
 
+    def mqtt_topic_bases(self) -> list:
+        """Gốc topic của mọi nguồn MQTT đang chạy (xem /api/publish)."""
+        return [d.topic_base() for d in self._drivers.values() if isinstance(d, MqttDriver)]
+
     def driver_for_channel(self, serial: str, ch_code: str) -> Optional[SourceDriver]:
         code = self._route.get((serial, ch_code))
         return self._drivers.get(code) if code else None

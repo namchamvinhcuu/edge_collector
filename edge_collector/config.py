@@ -58,6 +58,10 @@ class Settings:
     # của python-reviewer 2026-09-17: GET /setup/api_key trả RAW credential
     # (không phải dữ liệu đo như /setup/activity) qua domain có thể public.
     setup_token: str = os.environ.get("EDGE_SETUP_TOKEN", "")
+    # Prefix topic Odoo được phép publish qua /api/publish, cách nhau dấu
+    # phẩy. RỖNG = TẮT endpoint (fail-closed): người quản trị site mở từng
+    # prefix, workflow Odoo không tự mở rộng được. Đọc mỗi request -> hot-reload.
+    publish_topic_allow: str = os.environ.get("EDGE_PUBLISH_TOPIC_ALLOW", "")
 
     state_dir: Path = field(default_factory=lambda: Path(os.environ.get("EDGE_STATE_DIR", "./var")))
 
@@ -142,6 +146,7 @@ class Settings:
             os.environ.get("EDGE_SUBMIT_INTERVAL_S", str(self.submit_interval_s)))
         self.config_debounce_s = _int("EDGE_CONFIG_DEBOUNCE_S", self.config_debounce_s)
         self.setup_token = os.environ.get("EDGE_SETUP_TOKEN", "")
+        self.publish_topic_allow = os.environ.get("EDGE_PUBLISH_TOPIC_ALLOW", "")
 
 
 settings = Settings()
