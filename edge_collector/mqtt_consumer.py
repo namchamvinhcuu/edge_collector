@@ -116,6 +116,14 @@ class MqttConsumer:
         # serial -> firmware có xác minh HMAC cho lệnh xuống không ("sig_cmd"
         # trong status). Có thì manager ký lệnh, không thì gửi gói không ký.
         self.sig_caps = {}
+        # (serial, kind) -> api_key lúc thấy gói có sig hợp lệ - xem _handle().
+        # Chỉ ràng buộc khi key hiện tại vẫn là key đó: Odoo đổi/xoá key của
+        # device thì tự hết hiệu lực. Trong RAM: restart edge cũng reset.
+        self._signed_kinds = {}
+        self._sticky_warned = set()     # (serial, kind) đã log cảnh báo, chống ngập log
+        # cmd_id -> MQTTMessageInfo của lệnh paho đang giữ chờ reconnect
+        # (NO_CONN) - để cancel_pending() rút ra khi lệnh đã hết hạn.
+        self._pending_mids = {}
         self._hb_task = None
         # Nhật ký gói tin cho trang /ops. Vòng đệm trong BỘ NHỚ, không ghi
         # đĩa: đây là kính lúc, không phải sổ sách. SQLite history mới là
@@ -234,6 +242,21 @@ class MqttConsumer:
                 _logger.warning("node %s: sig sai/chưa xác minh được trên "
                                 "chủ đề %s, bỏ qua gói", serial, kind)
                 return
+            self._signed_kinds[(serial, kind)] = api_key
+            self._sticky_warned.discard((serial, kind))
+        elif (self._signed_kinds.get((serial, kind)) is not None
+              and self._signed_kinds[(serial, kind)] == self._agent.manager.cached_node_api_key(serial)
+              and not (kind == "status" and not data.get("online"))):
+            # Đã từng ký loại gói này (với key hiện tại) thì từ đây KHÔNG nhận
+            # bản không ký nữa (chống giả status để tắt sig_caps / giả cmdack).
+            # Theo TỪNG loại: ESP32 chỉ ký cmdack, meas/status không bao giờ có
+            # sig. LWT {"online":false} được miễn - broker phát, không ký được.
+            self.stats["sig_rejected"] += 1
+            if (serial, kind) not in self._sticky_warned:
+                self._sticky_warned.add((serial, kind))
+                _logger.warning("node %s: gói %s không có sig dù trước đó đã ký, bỏ qua "
+                                "(chỉ báo lần đầu)", serial, kind)
+            return
 
         if kind == "status":
             online = bool(data.get("online"))
@@ -401,6 +424,7 @@ class MqttConsumer:
                             "lệnh #%s %s %s=%s (cho gui lai, mat ket noi tam thoi)" %
                             (payload.get("id"), payload.get("cmd"),
                              payload.get("channel"), payload.get("value")))
+            self._pending_mids[payload.get("id")] = info
             return True
         if info.rc != mqtt.MQTT_ERR_SUCCESS:
             _logger.warning("đẩy lệnh tới %s thất bại rc=%s", topic, info.rc)
@@ -409,6 +433,34 @@ class MqttConsumer:
         self._log_event("down", topic, len(json.dumps(payload)),
                         "lệnh #%s %s %s=%s" % (payload.get("id"), payload.get("cmd"),
                                                payload.get("channel"), payload.get("value")))
+        return True
+
+    def cancel_pending(self, cmd_id) -> bool:
+        """Rút lệnh mà paho còn GIỮ chờ reconnect (NO_CONN, chưa ra khỏi tiến
+        trình). True = đã rút, chắc chắn node không nhận; False = không có hoặc
+        paho đã gửi đi rồi. Gọi khi lệnh hết hạn chờ ACK, để node không chạy
+        muộn một lệnh người dùng đã được báo kết quả.
+
+        Dùng API NỘI BỘ paho 1.6.1 (_out_messages/_out_message_mutex/
+        mqtt_ms_publish, client.py:146/583/604) - paho không có API công khai
+        để hủy publish. requirements.txt pin paho-mqtt==1.6.1; nâng phiên bản
+        phải kiểm lại hàm này."""
+        info = self._pending_mids.pop(cmd_id, None)
+        if info is None or self._cli is None:
+            return False
+        with self._cli._out_message_mutex:
+            msg = self._cli._out_messages.get(info.mid)
+            if msg is None or msg.state != mqtt.mqtt_ms_publish:
+                return False
+            del self._cli._out_messages[info.mid]
+            if msg.dup:
+                # Đã lên dây một lần rồi bị reconnect reset về state publish
+                # (paho _messages_reconnect_reset_out đặt dup=True): broker có
+                # thể đã giao cho node. Vẫn rút để không gửi lại muộn, nhưng
+                # KHÔNG được báo "chắc chắn chưa gửi" - bên gọi trả "unknown".
+                _logger.info("đã rút lệnh #%s (từng gửi, chưa có PUBACK)", cmd_id)
+                return False
+        _logger.info("đã hủy lệnh #%s paho còn giữ (chưa gửi được)", cmd_id)
         return True
 
     # -- nhịp tim thay mặt node ------------------------------------------

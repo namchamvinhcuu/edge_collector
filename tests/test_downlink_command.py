@@ -122,7 +122,53 @@ def _call(client, method, url, body):
     return client.get(url)
 
 
-@pytest.mark.parametrize("method,url,body", _ENDPOINTS)
+# Đường GHI/điều khiển: X-Edge-Code BẮT BUỘC. Đường CHỈ ĐỌC (/api/latest,
+# /api/stats - pcm-edge-hardening, Nam chốt): tablet trình duyệt gọi thẳng,
+# không gửi được header -> THIẾU header thì cho qua, CÓ mà sai/rỗng thì 401.
+_WRITE_ENDPOINTS = [e for e in _ENDPOINTS if e[0] == "post"]
+_READ_ENDPOINTS = [e for e in _ENDPOINTS if e[0] == "get"]
+
+
+def _assert_rejected_untouched(resp, manager):
+    assert resp.status_code == 401
+    data = resp.json()
+    assert data["ok"] is False
+    assert data["status"] == "rejected"
+    assert data["error"]
+    # Bị chặn TRƯỚC khi chạm manager/driver/thiết bị - và không log như request hợp lệ.
+    assert manager.queue_calls == [] and manager.driver_lookups == []
+    assert manager.driver.calls == []
+    assert inbound_api.recent_requests() == []
+
+
+@pytest.mark.parametrize("method,url,body", _READ_ENDPOINTS)
+@pytest.mark.parametrize("headers", [{"X-Edge-Code": "WRONG-CODE"}, {"X-Edge-Code": ""},
+                                     {"X-Edge-Code": settings.edge_code[:-1]}],
+                         ids=["wrong", "empty", "prefix"])
+def test_read_endpoints_reject_present_but_wrong_edge_code_with_401(method, url, body, headers):
+    """Header rỗng "" là CÓ header (chỉ None/thiếu mới được miễn) -> 401."""
+    manager = _FakeInboundManager(driver=_FakeDriver())
+    client, _ = _inbound_client(manager, headers=headers)
+    inbound_api._recent_requests.clear()
+
+    resp = _call(client, method, url, body)
+
+    _assert_rejected_untouched(resp, manager)
+
+
+@pytest.mark.parametrize("method,url,body", _READ_ENDPOINTS)
+def test_read_endpoints_allow_missing_edge_code(method, url, body):
+    client, _ = _inbound_client(_FakeInboundManager(driver=_FakeDriver()), headers={})
+    inbound_api._recent_requests.clear()
+
+    resp = _call(client, method, url, body)
+
+    assert resp.status_code == 200
+    assert resp.json().get("status") != "rejected"
+    assert [r["endpoint"] for r in inbound_api.recent_requests()] == [url.split("?")[0]]
+
+
+@pytest.mark.parametrize("method,url,body", _WRITE_ENDPOINTS)
 @pytest.mark.parametrize("headers", [{}, {"X-Edge-Code": "WRONG-CODE"}, {"X-Edge-Code": ""}],
                          ids=["missing", "wrong", "empty"])
 def test_api_endpoints_reject_missing_or_wrong_edge_code_with_401(method, url, body, headers):
@@ -618,36 +664,121 @@ def test_no_sig_caps_attribute_sends_unsigned_with_small_request_id():
     assert "sig" not in payload and "ts" not in payload
 
 
-def _value_for_len(target, rid):
-    """Chọn chuỗi value để json.dumps(payload có request_id) dài đúng target byte."""
+def _mqtt_len(p):
+    """Gói MQTT không ký: json.dumps mặc định (mqtt_consumer.publish_command)."""
+    return len(json.dumps(p))
+
+
+def _poll_len(p):
+    """Gói poll HTTP: node_api.node_commands trả {"command": p}, Starlette
+    JSONResponse render gọn (separators=(",", ":"))."""
+    return len(json.dumps({"command": p}, separators=(",", ":")))
+
+
+def _wire_len(p):
+    return max(_mqtt_len(p), _poll_len(p))
+
+
+def _value_for_wire(target, rid, extra=None):
+    """Chọn chuỗi value để max(dạng MQTT, dạng poll) của payload có request_id
+    dài đúng target byte (pad cộng đều vào cả 2 dạng)."""
     seq = 1000
-    base = {"id": seq, "channel": "c", "cmd": "on", "value": "", "request_id": rid}
-    pad = target - len(json.dumps(base))
+    base = dict({"id": seq, "channel": "c", "cmd": "on", "value": ""}, **(extra or {}))
+    base["request_id"] = rid
+    pad = target - _wire_len(base)
     assert pad >= 0
     return seq, "x" * pad
+
+
+def _run_unsigned(monkeypatch, value, rid, extra=None, mqtt=True):
+    monkeypatch.setattr(manager_mod.random, "randint", lambda a, b: 999)  # -> id 1000
+    m = _mgr()
+    if mqtt:
+        m.mqtt_cmd = _FakeMqtt()
+
+        def _after(cid):
+            m.node_ack_command(cid, True, serial="NODE1")
+            return m.mqtt_cmd.published[0][1]
+    else:
+        def _after(cid):
+            p = m.node_pull_command("NODE1")
+            m.node_ack_command(cid, True, serial="NODE1")
+            return p
+
+    result, payload = asyncio.run(_queue_then(m, _after, ch="c", cmd="on", value=value,
+                                              request_id=rid, extra=extra))
+    return result, payload
 
 
 @pytest.mark.parametrize("delta,kept", [(-1, True), (0, False), (1, False)],
                          ids=["191", "eq192", "193"])
 def test_unsigned_request_id_kept_below_192_bytes_dropped_at_or_beyond(monkeypatch, delta, kept):
-    """Firmware bỏ gói khi data_len >= 192 -> chỉ gắn request_id khi < 192."""
-    monkeypatch.setattr(manager_mod.random, "randint", lambda a, b: 999)  # -> id 1000
+    """Firmware bỏ gói khi data_len >= 192 -> chỉ gắn request_id khi CẢ 2 dạng
+    gói thật (MQTT json.dumps + poll {"command":...} gọn) đều < 192. Không
+    extra: dạng poll là dạng dài hơn (thêm 12 byte bọc, bớt 9 khoảng trắng)."""
     rid = "r" * 32
-    seq, value = _value_for_len(NODE_CMD_MAX_BYTES + delta, rid)
-    m = _mgr()
-    m.mqtt_cmd = _FakeMqtt()
+    seq, value = _value_for_wire(NODE_CMD_MAX_BYTES + delta, rid)
 
-    asyncio.run(_queue_then(m, lambda cid: m.node_ack_command(cid, True, serial="NODE1"),
-                            ch="c", cmd="on", value=value, request_id=rid))
+    result, payload = _run_unsigned(monkeypatch, value, rid)
 
-    _, payload = m.mqtt_cmd.published[0]
+    assert result["ok"] is True
     assert payload["id"] == seq
     assert ("request_id" in payload) is kept
     if kept:
-        assert len(json.dumps(payload)) == NODE_CMD_MAX_BYTES - 1
+        assert _poll_len(payload) == NODE_CMD_MAX_BYTES - 1
+        assert _poll_len(payload) > _mqtt_len(payload)
     else:
         # Bỏ request_id nhưng lệnh VẪN được gửi (không chặn lệnh).
         assert payload["value"] == value
+
+
+def test_unsigned_request_id_dropped_when_only_poll_form_reaches_192(monkeypatch):
+    """Regression pcm-edge-hardening: bản cũ chỉ đo json.dumps (dạng MQTT) nên
+    gói 189 byte qua MQTT lọt, nhưng qua poll HTTP nó thành 192 byte -> ESP32
+    bỏ gói. Phải đo dạng poll và bỏ request_id."""
+    rid = "r" * 32
+    _, value = _value_for_wire(NODE_CMD_MAX_BYTES, rid)
+    probe = {"id": 1000, "channel": "c", "cmd": "on", "value": value, "request_id": rid}
+    assert _mqtt_len(probe) < NODE_CMD_MAX_BYTES <= _poll_len(probe)
+
+    _, payload = _run_unsigned(monkeypatch, value, rid)
+
+    assert "request_id" not in payload
+
+
+@pytest.mark.parametrize("delta,kept", [(-1, True), (0, False)], ids=["191", "eq192"])
+def test_unsigned_request_id_boundary_when_mqtt_form_is_longer(monkeypatch, delta, kept):
+    """Có extra (ms, period_ms) -> 7 khóa -> 13 khoảng trắng > 12 byte bọc, nên
+    dạng MQTT lại là dạng dài hơn: phải lấy max, không chỉ đo dạng poll."""
+    rid = "r" * 32
+    extra = {"ms": 30000, "period_ms": 500}
+    _, value = _value_for_wire(NODE_CMD_MAX_BYTES + delta, rid, extra)
+    probe = dict({"id": 1000, "channel": "c", "cmd": "on", "value": value}, **extra)
+    probe["request_id"] = rid
+    assert _mqtt_len(probe) > _poll_len(probe)
+    assert _mqtt_len(probe) == NODE_CMD_MAX_BYTES + delta
+
+    _, payload = _run_unsigned(monkeypatch, value, rid, extra=extra)
+
+    assert ("request_id" in payload) is kept
+    assert payload["ms"] == 30000 and payload["period_ms"] == 500
+
+
+@pytest.mark.parametrize("delta,kept", [(-1, True), (0, False)], ids=["191", "eq192"])
+def test_unsigned_request_id_poll_http_body_really_below_192(monkeypatch, delta, kept):
+    """Đường poll thật: render đúng như node_api.node_commands trả về (Starlette
+    JSONResponse) và đo số byte body thực sự xuống node."""
+    from starlette.responses import JSONResponse
+    rid = "r" * 32
+    _, value = _value_for_wire(NODE_CMD_MAX_BYTES + delta, rid)
+
+    _, payload = _run_unsigned(monkeypatch, value, rid, mqtt=False)
+
+    assert payload is not None
+    assert ("request_id" in payload) is kept
+    body = JSONResponse({"command": payload}).body
+    if kept:
+        assert len(body) == NODE_CMD_MAX_BYTES - 1
 
 
 def test_unsigned_request_id_also_applies_to_poll_queue():
@@ -991,3 +1122,284 @@ def test_node_api_ack_with_real_manager_rejects_other_serial():
         assert not m._node_futures[cid].done()
     finally:
         loop.close()
+
+
+# ===========================================================================
+# 8. pcm-edge-hardening: api_command TimeoutError -> "unknown"; source/test
+# ===========================================================================
+
+
+@pytest.mark.parametrize("exc", [TimeoutError("t/o"), asyncio.TimeoutError()],
+                         ids=["builtin", "asyncio"])
+def test_api_command_driver_timeout_returns_unknown_not_error(exc):
+    """Driver timeout SAU khi đã gửi frame ghi: PLC có thể đã chạy lệnh ->
+    'unknown' để người vận hành không bấm lại mù quáng."""
+    driver = _FakeDriver(exc=exc)
+    client, _ = _inbound_client(_FakeInboundManager(driver=driver), headers=_good_headers())
+
+    resp = client.post("/api/command", json={"serial": "PLC1", "channel": "c1",
+                                             "cmd": "write", "value": 5})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is False and data["status"] == "unknown"
+    assert data["error"]
+    assert driver.calls == [("c1", "write", 5)]
+
+
+def test_api_command_queue_command_timeout_returns_unknown():
+    manager = _FakeInboundManager(queue_exc=TimeoutError())
+    client, _ = _inbound_client(manager, headers=_good_headers())
+
+    resp = client.post("/api/command", json={"serial": "NODE1", "channel": "relay_red"})
+
+    assert resp.json()["ok"] is False and resp.json()["status"] == "unknown"
+
+
+@pytest.mark.parametrize("exc", [ConnectionError("rớt"), OSError("io"), KeyError("k")],
+                         ids=["conn", "os", "key"])
+def test_api_command_non_timeout_exception_stays_error(exc):
+    client, _ = _inbound_client(_FakeInboundManager(driver=_FakeDriver(exc=exc)),
+                                headers=_good_headers())
+
+    resp = client.post("/api/command", json={"serial": "PLC1", "channel": "c1",
+                                             "cmd": "write", "value": 1})
+
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is False and resp.json()["status"] == "error"
+
+
+class _ProbeSpyManager(_FakeInboundManager):
+    def __init__(self):
+        super().__init__()
+        self.probes = []
+
+    def build_probe(self, src_cfg):
+        self.probes.append(src_cfg)
+        return _FakeDriver()
+
+
+@pytest.mark.parametrize("source", ["S1", [{"kind": "sim"}], 42, True],
+                         ids=["str", "list", "int", "bool"])
+def test_api_source_test_non_dict_source_is_error_not_500(source):
+    manager = _ProbeSpyManager()
+    client, _ = _inbound_client(manager, headers=_good_headers())
+    inbound_api._recent_requests.clear()
+
+    resp = client.post("/api/source/test", json={"source": source})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is False and data["items"] == [] and data["error"]
+    assert manager.probes == []
+
+
+@pytest.mark.parametrize("source", [{"kind": "sim"}, None, {}, []],
+                         ids=["dict", "null", "empty-dict", "empty-list"])
+def test_api_source_test_dict_or_empty_source_reaches_probe(source):
+    """Rỗng/None rơi về {} (giữ hành vi cũ) - vẫn là dict, tới build_probe."""
+    manager = _ProbeSpyManager()
+    client, _ = _inbound_client(manager, headers=_good_headers())
+
+    resp = client.post("/api/source/test", json={"source": source})
+
+    assert resp.status_code == 200
+    assert manager.probes == [source or {}]
+    assert resp.json()["ok"] is True
+
+
+# ===========================================================================
+# 9. pcm-edge-hardening: manager.queue_command + mq.cancel_pending
+# ===========================================================================
+
+
+class _CancelMqtt(_FakeMqtt):
+    """Fake MqttConsumer có cancel_pending(): trả cancel_result, ghi lại lời gọi."""
+
+    def __init__(self, cancel_result=False, **kw):
+        super().__init__(**kw)
+        self.cancel_result = cancel_result
+        self.cancel_calls = []
+
+    def cancel_pending(self, cmd_id):
+        self.cancel_calls.append(cmd_id)
+        result, self.cancel_result = self.cancel_result, False   # chỉ rút được 1 lần
+        return result
+
+
+def test_timeout_with_cancelled_pending_returns_error_not_unknown():
+    m = _mgr()
+    m.mqtt_cmd = _CancelMqtt(cancel_result=True)
+
+    result = asyncio.run(m.queue_command("NODE1", "relay_red", "on", 1, timeout=0.05))
+
+    cmd_id = m._node_cmd_seq
+    assert result["ok"] is False
+    assert result["status"] == "error"
+    assert "đã hủy" in result["error"]
+    assert m.mqtt_cmd.cancel_calls[0] == cmd_id
+    _assert_clean(m)
+
+
+def test_timeout_without_cancellable_pending_stays_unknown():
+    m = _mgr()
+    m.mqtt_cmd = _CancelMqtt(cancel_result=False)
+
+    result = asyncio.run(m.queue_command("NODE1", "relay_red", "on", 1, timeout=0.05))
+
+    assert result["status"] == "unknown"
+    assert m._node_cmd_seq in m.mqtt_cmd.cancel_calls
+    _assert_clean(m)
+
+
+def test_acked_command_still_calls_cancel_pending_in_finally():
+    """Dọn mục NO_CONN còn sót khi ACK tới (paho đã gửi lại) - finally luôn gọi."""
+    m = _mgr()
+    m.mqtt_cmd = _CancelMqtt()
+
+    result, cid = asyncio.run(_queue_then(
+        m, lambda cid: (m.node_ack_command(cid, True, serial="NODE1"), cid)[1]))
+
+    assert result["ok"] is True and result["status"] == "ok"
+    assert m.mqtt_cmd.cancel_calls == [cid]
+
+
+def test_broker_down_branch_also_calls_cancel_pending():
+    m = _mgr()
+    m.mqtt_cmd = _CancelMqtt(publish_result=False, caps={"NODE1": True})
+
+    result = asyncio.run(m.queue_command("NODE1", "relay_red", "on", 1, timeout=1.0))
+
+    assert result["status"] == "error"
+    assert m.mqtt_cmd.cancel_calls == [m._node_cmd_seq]
+
+
+def test_cancelled_task_still_calls_cancel_pending():
+    """Task queue_command bị cancel (vd request HTTP bị hủy) -> finally vẫn rút
+    lệnh paho còn giữ, không để node chạy muộn."""
+    m = _mgr()
+    m.mqtt_cmd = _CancelMqtt()
+
+    async def _run():
+        task = asyncio.ensure_future(m.queue_command("NODE1", "relay_red", "on", 1,
+                                                     timeout=5.0))
+        await asyncio.sleep(0)
+        cid = m._node_cmd_seq
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return cid
+
+    cid = asyncio.run(_run())
+
+    assert m.mqtt_cmd.cancel_calls == [cid]
+    _assert_clean(m)
+
+
+def test_fake_without_cancel_pending_and_poll_path_do_not_crash():
+    m = _mgr()
+    m.mqtt_cmd = _FakeMqtt()                 # không có cancel_pending
+    assert asyncio.run(m.queue_command("NODE1", "c", "on", 1, timeout=0.02))["status"] == "unknown"
+
+    m2 = _mgr()                              # mq None -> hàng đợi poll
+    assert asyncio.run(m2.queue_command("NODE1", "c", "on", 1, timeout=0.02))["status"] == "unknown"
+
+
+def test_end_to_end_real_consumer_real_paho_no_conn_timeout_cancels(monkeypatch):
+    """Tích hợp manager thật + MqttConsumer thật + paho Client thật CHƯA
+    connect: publish QoS1 -> NO_CONN (paho giữ lệnh) -> hết hạn ACK -> lệnh
+    bị rút khỏi paho, kết quả 'error ... đã hủy' (biết CHẮC chưa gửi)."""
+    import edge_collector.mqtt_consumer as mqtt_consumer
+    monkeypatch.setattr(settings, "mqtt_consumer_topic", "fms/+/meas")
+    m = _mgr()
+    c = MqttConsumer(_AgentWithRealManager(m))
+    c._cli = mqtt_consumer.mqtt.Client(client_id="pytest-no-broker")
+    c._connected = True
+    c.caps = {"NODE1": True}
+    c.stats["online"] = {"NODE1": True}
+    m.mqtt_cmd = c
+
+    result = asyncio.run(m.queue_command("NODE1", "relay_red", "on", 1, timeout=0.05))
+
+    assert result["ok"] is False and result["status"] == "error"
+    assert "đã hủy" in result["error"]
+    assert c._cli._out_messages == {}          # paho sẽ KHÔNG gửi lại khi reconnect
+    assert c._pending_mids == {}
+    assert c.stats["cmd_sent_no_conn"] == 1
+
+
+def test_end_to_end_real_paho_already_resent_stays_unknown(monkeypatch):
+    """Paho đã gửi lại (state rời mqtt_ms_publish) trước khi hết hạn -> không
+    rút được -> 'unknown', message giữ nguyên trong paho."""
+    import edge_collector.mqtt_consumer as mqtt_consumer
+    monkeypatch.setattr(settings, "mqtt_consumer_topic", "fms/+/meas")
+    m = _mgr()
+    c = MqttConsumer(_AgentWithRealManager(m))
+    c._cli = mqtt_consumer.mqtt.Client(client_id="pytest-no-broker")
+    c._connected = True
+    c.caps = {"NODE1": True}
+    c.stats["online"] = {"NODE1": True}
+    m.mqtt_cmd = c
+
+    async def _run():
+        task = asyncio.ensure_future(m.queue_command("NODE1", "relay_red", "on", 1,
+                                                     timeout=0.05))
+        await asyncio.sleep(0)
+        for msg in c._cli._out_messages.values():
+            msg.state = mqtt_consumer.mqtt.mqtt_ms_wait_for_puback
+        return await task
+
+    result = asyncio.run(_run())
+
+    assert result["status"] == "unknown"
+    assert len(c._cli._out_messages) == 1
+    assert c._pending_mids == {}
+
+
+def test_end_to_end_real_paho_dup_after_reconnect_timeout_is_unknown(monkeypatch):
+    """r2: lệnh đã lên dây rồi paho reconnect reset (dup=True) -> hết hạn ACK
+    -> rút khỏi paho nhưng kết quả 'unknown' (node có thể đã nhận)."""
+    import edge_collector.mqtt_consumer as mqtt_consumer
+    monkeypatch.setattr(settings, "mqtt_consumer_topic", "fms/+/meas")
+    m = _mgr()
+    c = MqttConsumer(_AgentWithRealManager(m))
+    c._cli = mqtt_consumer.mqtt.Client(client_id="pytest-no-broker")
+    c._connected = True
+    c.caps = {"NODE1": True}
+    c.stats["online"] = {"NODE1": True}
+    m.mqtt_cmd = c
+
+    async def _run():
+        task = asyncio.ensure_future(m.queue_command("NODE1", "relay_red", "on", 1,
+                                                     timeout=0.05))
+        await asyncio.sleep(0)
+        for msg in c._cli._out_messages.values():
+            msg.state = mqtt_consumer.mqtt.mqtt_ms_wait_for_puback
+        c._cli._messages_reconnect_reset_out()
+        return await task
+
+    result = asyncio.run(_run())
+
+    assert result["ok"] is False and result["status"] == "unknown"
+    assert c._cli._out_messages == {}             # không còn gửi lại muộn
+    assert c._pending_mids == {}
+
+
+def test_sticky_with_real_manager_released_when_device_api_key_rotates():
+    """r2 tích hợp SourceManager thật: key lấy từ devices_by_serial; Odoo đổi
+    key (pull_config mới) -> gói không ký của node được nhận lại."""
+    from edge_collector.mqtt_consumer import _sign
+    m = _mgr(api_key=API_KEY)
+    c = MqttConsumer(_AgentWithRealManager(m))
+    status = {"online": True, "cmd": True, "sig_cmd": True}
+    c._handle("fms/NODE1/status", json.dumps(dict(status, sig=_sign(API_KEY, status))).encode())
+
+    _status(c, online=True, cmd=True)                # không ký -> bị chặn
+    assert c.sig_caps["NODE1"] is True
+    assert c.stats["sig_rejected"] == 1
+
+    m.devices_by_serial["NODE1"]["api_key"] = "new-key"  # secret-allow: test fixture
+
+    _status(c, online=True, cmd=True)
+    assert c.sig_caps["NODE1"] is False
+    assert c.stats["sig_rejected"] == 1

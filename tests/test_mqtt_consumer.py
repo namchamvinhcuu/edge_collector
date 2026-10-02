@@ -625,3 +625,353 @@ def test_publish_command_returns_true_and_counts_via_cmd_sent_no_conn_when_broke
     assert len(c._cli.published) == 1
     assert len(c.traffic) == 1 and c.traffic[0]["dir"] == "down"
     assert "gui lai" in c.traffic[0]["note"] or "mat ket noi" in c.traffic[0]["note"]
+
+
+# --- pcm-edge-hardening: _signed_kinds (chống hạ cấp về gói không ký) ----
+#
+# Đã từng nhận gói CÓ sig hợp lệ cho (serial, kind) thì gói KHÔNG sig cùng
+# (serial, kind) bị từ chối - trừ LWT (status + online falsy). Theo TỪNG
+# loại: ESP32 chỉ ký cmdack nên meas/status không ký của nó vẫn được nhận.
+
+_KEY = "secret123"  # secret-allow: test fixture, không phải credential thật
+
+
+def _raw(payload):
+    return json.dumps(payload).encode()
+
+
+def test_unsigned_cmdack_after_signed_cmdack_is_rejected_and_not_acked():
+    consumer = MqttConsumer(_FakeAgent(api_key=_KEY))
+    consumer._handle("fms/NODE1/cmdack", _signed(_KEY, {"id": 5, "ok": True}))
+
+    consumer._handle("fms/NODE1/cmdack", _raw({"id": 6, "ok": True}))
+
+    assert consumer._agent.manager.acked == [(5, True, "")]
+    assert consumer.stats["sig_rejected"] == 1
+    assert consumer.stats["cmd_acked"] == 1
+
+
+def test_signed_cmdack_still_accepted_after_unsigned_one_was_rejected():
+    consumer = MqttConsumer(_FakeAgent(api_key=_KEY))
+    consumer._handle("fms/NODE1/cmdack", _signed(_KEY, {"id": 5, "ok": True}))
+    consumer._handle("fms/NODE1/cmdack", _raw({"id": 6, "ok": True}))
+
+    consumer._handle("fms/NODE1/cmdack", _signed(_KEY, {"id": 7, "ok": False}))
+
+    assert [a[0] for a in consumer._agent.manager.acked] == [5, 7]
+
+
+def test_esp32_signs_only_cmdack_so_unsigned_meas_and_status_still_accepted(monkeypatch):
+    monkeypatch.setattr(config.settings, "mqtt_consumer_forward", True)
+    consumer = MqttConsumer(_FakeAgent(api_key=_KEY))
+    consumer._handle("fms/NODE1/cmdack", _signed(_KEY, {"id": 5, "ok": True}))
+
+    consumer._handle("fms/NODE1/meas", _raw({"items": [{"ch": "temp", "v": 21.5}]}))
+    consumer._handle("fms/NODE1/status", _raw({"online": True, "cmd": True}))
+
+    assert consumer._agent.readings[0][:2] == ("NODE1", "temp")
+    assert consumer.stats["online"]["NODE1"] is True
+    assert consumer.caps["NODE1"] is True
+    assert consumer.stats["sig_rejected"] == 0
+
+
+def test_unsigned_status_after_signed_status_cannot_turn_off_sig_caps():
+    """Kịch bản tấn công: giả status online KHÔNG ký, không có sig_cmd, để
+    edge thôi ký lệnh xuống - phải bị từ chối, sig_caps giữ True."""
+    consumer = MqttConsumer(_FakeAgent(api_key=_KEY))
+    consumer._handle("fms/NODE1/status",
+                     _signed(_KEY, {"online": True, "cmd": True, "sig_cmd": True}))
+    assert consumer.sig_caps["NODE1"] is True
+
+    consumer._handle("fms/NODE1/status", _raw({"online": True, "cmd": True}))
+
+    assert consumer.sig_caps["NODE1"] is True
+    assert consumer.stats["sig_rejected"] == 1
+
+
+@pytest.mark.parametrize("lwt", [{"online": False}, {"online": 0}, {}],
+                         ids=["false", "zero", "missing"])
+def test_unsigned_lwt_after_signed_status_is_still_accepted(lwt):
+    """LWT do broker phát, không ký được -> miễn (status + online falsy)."""
+    consumer = MqttConsumer(_FakeAgent(api_key=_KEY))
+    consumer._handle("fms/NODE1/status",
+                     _signed(_KEY, {"online": True, "cmd": True, "sig_cmd": True}))
+
+    consumer._handle("fms/NODE1/status", _raw(lwt))
+
+    assert consumer.stats["online"]["NODE1"] is False
+    assert consumer.stats["sig_rejected"] == 0
+    assert consumer.sig_caps["NODE1"] is True      # LWT không xóa lời khai firmware
+
+
+def test_lwt_exemption_applies_only_to_status_not_cmdack():
+    """Gói cmdack không ký mang 'online': false KHÔNG được hưởng miễn trừ LWT."""
+    consumer = MqttConsumer(_FakeAgent(api_key=_KEY))
+    consumer._handle("fms/NODE1/cmdack", _signed(_KEY, {"id": 5, "ok": True}))
+
+    consumer._handle("fms/NODE1/cmdack", _raw({"id": 6, "ok": True, "online": False}))
+
+    assert [a[0] for a in consumer._agent.manager.acked] == [5]
+    assert consumer.stats["sig_rejected"] == 1
+
+
+def test_signed_kinds_is_per_serial():
+    consumer = MqttConsumer(_FakeAgent(api_key=_KEY))
+    consumer._handle("fms/NODE1/cmdack", _signed(_KEY, {"id": 5, "ok": True}))
+
+    consumer._handle("fms/NODE2/cmdack", _raw({"id": 6, "ok": True}))
+
+    assert consumer._agent.manager.acked_serials == ["NODE1", "NODE2"]
+    assert consumer.stats["sig_rejected"] == 0
+
+
+def test_invalid_sig_does_not_mark_kind_as_signed():
+    """Gói sig SAI không được 'khóa' (serial, kind) - nếu không, kẻ gửi rác có
+    sig sai sẽ làm node firmware cũ (không ký) bị từ chối vĩnh viễn."""
+    consumer = MqttConsumer(_FakeAgent(api_key=_KEY))
+    consumer._handle("fms/NODE1/cmdack", _signed("attacker-key", {"id": 5, "ok": True}))
+
+    consumer._handle("fms/NODE1/cmdack", _raw({"id": 6, "ok": True}))
+
+    assert consumer._agent.manager.acked == [(6, True, "")]
+    assert consumer.stats["sig_rejected"] == 1      # chỉ gói sig sai
+
+
+def test_never_signed_node_unsigned_packets_never_rejected(monkeypatch):
+    monkeypatch.setattr(config.settings, "mqtt_consumer_forward", True)
+    consumer = MqttConsumer(_FakeAgent(api_key=_KEY))
+
+    for i in range(3):
+        consumer._handle("fms/NODE1/cmdack", _raw({"id": i, "ok": True}))
+    consumer._handle("fms/NODE1/status", _raw({"online": True, "cmd": True}))
+
+    assert len(consumer._agent.manager.acked) == 3
+    assert consumer.stats["sig_rejected"] == 0
+
+
+# --- pcm-edge-hardening: NO_CONN -> _pending_mids + cancel_pending() ------
+#
+# Dùng paho Client THẬT (1.6.1) nhưng KHÔNG connect: publish QoS1 khi chưa có
+# socket -> rc=NO_CONN, message nằm trong _out_messages state=mqtt_ms_publish
+# (paho tự gửi lại khi reconnect). Không có broker/mạng nào được chạm tới.
+
+
+def _real_paho_consumer(monkeypatch):
+    monkeypatch.setattr(config.settings, "mqtt_consumer_topic", "fms/+/meas")
+    c = MqttConsumer(_FakeAgent())
+    c._cli = mqtt_consumer.mqtt.Client(client_id="pytest-no-broker")
+    c._connected = True          # cờ trễ hơn socket thật -> đúng khe NO_CONN
+    c.caps = {"NODE1": True}
+    c.stats["online"] = {"NODE1": True}
+    return c
+
+
+def test_real_paho_no_conn_publish_is_tracked_in_pending_mids(monkeypatch):
+    c = _real_paho_consumer(monkeypatch)
+
+    ok = c.publish_command("NODE1", {"id": 77, "channel": "relay_red", "cmd": "on", "value": 1})
+
+    assert ok is True
+    info = c._pending_mids[77]
+    assert info.rc == mqtt_consumer.mqtt.MQTT_ERR_NO_CONN
+    msg = c._cli._out_messages[info.mid]
+    assert msg.state == mqtt_consumer.mqtt.mqtt_ms_publish
+    assert c.stats["cmd_sent_no_conn"] == 1
+
+
+def test_cancel_pending_removes_held_message_and_returns_true(monkeypatch):
+    c = _real_paho_consumer(monkeypatch)
+    c.publish_command("NODE1", {"id": 77, "channel": "relay_red", "cmd": "on", "value": 1})
+    mid = c._pending_mids[77].mid
+
+    assert c.cancel_pending(77) is True
+
+    assert mid not in c._cli._out_messages
+    assert 77 not in c._pending_mids
+    assert c.cancel_pending(77) is False           # lần 2: đã rút rồi
+
+
+def test_cancel_pending_only_removes_its_own_message(monkeypatch):
+    c = _real_paho_consumer(monkeypatch)
+    c.publish_command("NODE1", {"id": 1, "channel": "a", "cmd": "on", "value": 1})
+    c.publish_command("NODE1", {"id": 2, "channel": "b", "cmd": "on", "value": 1})
+    mid2 = c._pending_mids[2].mid
+
+    assert c.cancel_pending(1) is True
+
+    assert list(c._cli._out_messages) == [mid2]
+    assert 2 in c._pending_mids
+
+
+def test_cancel_pending_returns_false_when_paho_already_sent(monkeypatch):
+    """Sau reconnect paho đổi state sang wait_for_puback và gửi lại -> lệnh đã
+    ra khỏi tiến trình: KHÔNG được xóa, phải trả False (kết quả 'unknown')."""
+    c = _real_paho_consumer(monkeypatch)
+    c.publish_command("NODE1", {"id": 77, "channel": "relay_red", "cmd": "on", "value": 1})
+    mid = c._pending_mids[77].mid
+    c._cli._out_messages[mid].state = mqtt_consumer.mqtt.mqtt_ms_wait_for_puback
+
+    assert c.cancel_pending(77) is False
+
+    assert mid in c._cli._out_messages             # không đụng message đang bay
+    assert 77 not in c._pending_mids               # nhưng quên theo dõi nó
+
+
+def test_cancel_pending_returns_false_when_message_already_gone(monkeypatch):
+    """PUBACK đã về (paho tự xóa khỏi _out_messages) -> False, không lỗi."""
+    c = _real_paho_consumer(monkeypatch)
+    c.publish_command("NODE1", {"id": 77, "channel": "relay_red", "cmd": "on", "value": 1})
+    del c._cli._out_messages[c._pending_mids[77].mid]
+
+    assert c.cancel_pending(77) is False
+    assert 77 not in c._pending_mids
+
+
+def test_cancel_pending_unknown_id_or_no_client_returns_false(monkeypatch):
+    c = _real_paho_consumer(monkeypatch)
+    assert c.cancel_pending(12345) is False
+
+    c.publish_command("NODE1", {"id": 77, "channel": "relay_red", "cmd": "on", "value": 1})
+    c._cli = None                                  # đã stop()
+    assert c.cancel_pending(77) is False
+
+
+def test_successful_publish_is_not_tracked_as_pending(monkeypatch):
+    monkeypatch.setattr(config.settings, "mqtt_consumer_topic", "fms/+/meas")
+    c = _wired_consumer(client_rc=mqtt_consumer.mqtt.MQTT_ERR_SUCCESS)
+
+    assert c.publish_command("NODE1", {"id": 9, "cmd": "on"}) is True
+
+    assert c._pending_mids == {}
+    assert c.cancel_pending(9) is False
+
+
+def test_failed_publish_rc_is_not_tracked_as_pending(monkeypatch):
+    monkeypatch.setattr(config.settings, "mqtt_consumer_topic", "fms/+/meas")
+    c = _wired_consumer(client_rc=mqtt_consumer.mqtt.MQTT_ERR_QUEUE_SIZE)
+
+    assert c.publish_command("NODE1", {"id": 9, "cmd": "on"}) is False
+
+    assert c._pending_mids == {}
+
+
+# --- pcm-edge-hardening r2: sticky gắn với api_key + cảnh báo 1 lần ------
+
+
+def test_unsigned_accepted_again_after_odoo_rotates_api_key():
+    """Odoo cấp key mới cho device -> ràng buộc 'đã ký' với key cũ hết hiệu
+    lực (firmware có thể chưa học key mới) -> gói không ký được nhận lại."""
+    consumer = MqttConsumer(_FakeAgent(api_key=_KEY))
+    consumer._handle("fms/NODE1/cmdack", _signed(_KEY, {"id": 5, "ok": True}))
+    consumer._handle("fms/NODE1/cmdack", _raw({"id": 6, "ok": True}))
+    assert consumer.stats["sig_rejected"] == 1
+
+    consumer._agent.manager._api_key = "rotated-key"  # secret-allow: test fixture
+
+    consumer._handle("fms/NODE1/cmdack", _raw({"id": 7, "ok": True}))
+
+    assert [a[0] for a in consumer._agent.manager.acked] == [5, 7]
+    assert consumer.stats["sig_rejected"] == 1
+
+
+def test_unsigned_accepted_again_after_odoo_deletes_api_key():
+    consumer = MqttConsumer(_FakeAgent(api_key=_KEY))
+    consumer._handle("fms/NODE1/status",
+                     _signed(_KEY, {"online": True, "cmd": True, "sig_cmd": True}))
+
+    consumer._agent.manager._api_key = None
+
+    consumer._handle("fms/NODE1/status", _raw({"online": True, "cmd": True}))
+
+    assert consumer.sig_caps["NODE1"] is False
+    assert consumer.stats["sig_rejected"] == 0
+
+
+def test_sticky_rebinds_to_new_key_when_node_signs_with_it():
+    consumer = MqttConsumer(_FakeAgent(api_key=_KEY))
+    consumer._handle("fms/NODE1/cmdack", _signed(_KEY, {"id": 5, "ok": True}))
+    consumer._agent.manager._api_key = "rotated-key"  # secret-allow: test fixture
+    consumer._handle("fms/NODE1/cmdack", _signed("rotated-key", {"id": 6, "ok": True}))
+
+    consumer._handle("fms/NODE1/cmdack", _raw({"id": 7, "ok": True}))
+
+    assert [a[0] for a in consumer._agent.manager.acked] == [5, 6]
+    assert consumer.stats["sig_rejected"] == 1
+
+
+def _sticky_warnings(caplog):
+    return [r for r in caplog.records
+            if r.name == "edge.mqtt_consumer" and r.levelname == "WARNING"
+            and "không có sig" in r.getMessage()]
+
+
+def test_repeated_unsigned_after_signed_counts_each_but_warns_once(caplog):
+    consumer = MqttConsumer(_FakeAgent(api_key=_KEY))
+    consumer._handle("fms/NODE1/cmdack", _signed(_KEY, {"id": 5, "ok": True}))
+
+    with caplog.at_level("WARNING", logger="edge.mqtt_consumer"):
+        consumer._handle("fms/NODE1/cmdack", _raw({"id": 6, "ok": True}))
+        consumer._handle("fms/NODE1/cmdack", _raw({"id": 7, "ok": True}))
+
+    assert consumer.stats["sig_rejected"] == 2
+    assert len(_sticky_warnings(caplog)) == 1
+
+
+def test_sticky_warning_is_per_serial_kind(caplog):
+    consumer = MqttConsumer(_FakeAgent(api_key=_KEY))
+    consumer._handle("fms/NODE1/cmdack", _signed(_KEY, {"id": 5, "ok": True}))
+    consumer._handle("fms/NODE1/status",
+                     _signed(_KEY, {"online": True, "cmd": True, "sig_cmd": True}))
+
+    with caplog.at_level("WARNING", logger="edge.mqtt_consumer"):
+        consumer._handle("fms/NODE1/cmdack", _raw({"id": 6, "ok": True}))
+        consumer._handle("fms/NODE1/status", _raw({"online": True, "cmd": True}))
+
+    assert len(_sticky_warnings(caplog)) == 2
+
+
+def test_sticky_warning_rearms_after_a_new_signed_packet(caplog):
+    consumer = MqttConsumer(_FakeAgent(api_key=_KEY))
+    consumer._handle("fms/NODE1/cmdack", _signed(_KEY, {"id": 5, "ok": True}))
+
+    with caplog.at_level("WARNING", logger="edge.mqtt_consumer"):
+        consumer._handle("fms/NODE1/cmdack", _raw({"id": 6, "ok": True}))
+        consumer._handle("fms/NODE1/cmdack", _signed(_KEY, {"id": 7, "ok": True}))
+        consumer._handle("fms/NODE1/cmdack", _raw({"id": 8, "ok": True}))
+
+    assert len(_sticky_warnings(caplog)) == 2
+    assert consumer.stats["sig_rejected"] == 2
+
+
+# --- pcm-edge-hardening r2: cancel_pending với message dup (đã từng lên dây)
+
+
+def test_cancel_pending_dup_message_is_removed_but_returns_false(monkeypatch):
+    """Message đã lên dây (wait_for_puback) rồi bị paho reconnect reset về
+    state publish + dup=True: broker CÓ THỂ đã giao cho node -> rút khỏi paho
+    (không gửi lại muộn) nhưng KHÔNG báo 'chắc chắn chưa gửi' (False)."""
+    c = _real_paho_consumer(monkeypatch)
+    c.publish_command("NODE1", {"id": 77, "channel": "relay_red", "cmd": "on", "value": 1})
+    mid = c._pending_mids[77].mid
+    c._cli._out_messages[mid].state = mqtt_consumer.mqtt.mqtt_ms_wait_for_puback
+    c._cli._messages_reconnect_reset_out()          # paho thật đặt dup=True
+    msg = c._cli._out_messages[mid]
+    assert msg.state == mqtt_consumer.mqtt.mqtt_ms_publish and msg.dup is True
+
+    assert c.cancel_pending(77) is False
+
+    assert mid not in c._cli._out_messages
+    assert 77 not in c._pending_mids
+
+
+def test_cancel_pending_never_sent_survives_reconnect_reset_and_returns_true(monkeypatch):
+    """NO_CONN chưa từng lên dây: reset reconnect giữ dup=False -> vẫn rút
+    được và báo True (chắc chắn chưa gửi)."""
+    c = _real_paho_consumer(monkeypatch)
+    c.publish_command("NODE1", {"id": 77, "channel": "relay_red", "cmd": "on", "value": 1})
+    mid = c._pending_mids[77].mid
+    c._cli._messages_reconnect_reset_out()
+    assert c._cli._out_messages[mid].dup is False
+
+    assert c.cancel_pending(77) is True
+    assert mid not in c._cli._out_messages

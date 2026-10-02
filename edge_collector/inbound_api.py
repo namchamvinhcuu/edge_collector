@@ -47,8 +47,12 @@ def recent_requests() -> list:
     return list(_recent_requests)
 
 
-def _check_edge_code(x_edge_code: Optional[str]) -> Optional[JSONResponse]:
-    """Trả JSONResponse 401 khi thiếu/sai X-Edge-Code, None khi hợp lệ."""
+def _check_edge_code(x_edge_code: Optional[str], required: bool = True) -> Optional[JSONResponse]:
+    """Trả JSONResponse 401 khi thiếu/sai X-Edge-Code, None khi hợp lệ.
+    required=False (đường chỉ đọc /api/latest, /api/stats): tablet trình duyệt
+    gọi thẳng, không gửi được header -> thiếu thì cho qua, có mà sai thì chặn."""
+    if x_edge_code is None and not required:
+        return None
     if x_edge_code and hmac.compare_digest(x_edge_code.encode(), settings.edge_code.encode()):
         return None
     _logger.warning("từ chối request: X-Edge-Code %s", "sai" if x_edge_code else "thiếu")
@@ -105,6 +109,12 @@ async def api_command(request: Request, x_edge_code: Optional[str] = Header(defa
             # hàng cho firmware cũ tự poll — manager tự chọn, xem queue_command().
             return await manager.queue_command(serial, ch, cmd, value, extra=extra,
                                                request_id=request_id)
+    except TimeoutError:
+        # Driver timeout SAU khi đã gửi frame ghi: PLC có thể đã chạy lệnh -
+        # cùng nghĩa "unknown" như node không ACK (manager.queue_command).
+        _logger.warning("timeout thực thi lệnh %s trên %s/%s", cmd, serial, ch)
+        return {"ok": False, "status": "unknown",
+                "error": "thiết bị không trả lời kịp - có thể đã thực thi"}
     except Exception as exc:                                        # noqa: BLE001
         _logger.exception("lỗi thực thi lệnh %s trên %s/%s", cmd, serial, ch)
         return {"ok": False, "status": "error", "error": str(exc)[:200]}
@@ -115,7 +125,7 @@ async def api_command(request: Request, x_edge_code: Optional[str] = Header(defa
 @router.get("/api/latest")
 async def api_latest(request: Request, serial: str = "", ch: str = "",
                       x_edge_code: Optional[str] = Header(default=None)):
-    denied = _check_edge_code(x_edge_code)
+    denied = _check_edge_code(x_edge_code, required=False)
     if denied:
         return denied
     _log_request("/api/latest", serial=serial, ch=ch)
@@ -157,6 +167,8 @@ async def api_source_test(request: Request, x_edge_code: Optional[str] = Header(
     if err:
         return err
     src_cfg = body.get("source") or {}
+    if not isinstance(src_cfg, dict):
+        return {"ok": False, "items": [], "error": "source phải là JSON object"}
     _log_request("/api/source/test", kind=src_cfg.get("kind"))
     manager = request.app.state.manager
     try:
@@ -169,7 +181,7 @@ async def api_source_test(request: Request, x_edge_code: Optional[str] = Header(
 @router.get("/api/stats")
 async def api_stats(request: Request, serial: str = "", ch: str = "", hours: float = 24,
                      x_edge_code: Optional[str] = Header(default=None)):
-    denied = _check_edge_code(x_edge_code)
+    denied = _check_edge_code(x_edge_code, required=False)
     if denied:
         return denied
     _log_request("/api/stats", serial=serial, ch=ch, hours=hours)

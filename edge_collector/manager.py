@@ -239,8 +239,12 @@ class SourceManager:
         elif request_id:
             with_rid = dict(payload, request_id=request_id)
             # '<' chứ không '<=': firmware giữ 1 byte cho NUL (mqtt_link.c
-            # bỏ gói khi data_len >= 192).
-            if len(json.dumps(with_rid)) < NODE_CMD_MAX_BYTES:
+            # bỏ gói khi data_len >= 192). Đo cả 2 dạng gói thật sự đi ra:
+            # MQTT (json.dumps mặc định) và poll HTTP (Starlette JSON gọn, bọc
+            # trong {"command": ...}, node_api.node_commands) - lấy cái dài hơn.
+            sizes = (len(json.dumps(with_rid)),
+                     len(json.dumps({"command": with_rid}, separators=(",", ":"))))
+            if max(sizes) < NODE_CMD_MAX_BYTES:
                 payload = with_rid
             else:
                 _logger.info("lệnh #%s cho %s: bỏ request_id vì gói vượt %d byte",
@@ -254,6 +258,11 @@ class SourceManager:
         finally:
             self._node_futures.pop(cmd_id, None)
             self._node_cmd_owner.pop(cmd_id, None)
+            # Dọn mục NO_CONN còn sót (ACK tới sau khi paho đã gửi lại, hoặc
+            # task bị cancel) - lệnh đã gửi thì cancel_pending chỉ quên nó.
+            cancel = getattr(mq, "cancel_pending", None)
+            if cancel is not None:
+                cancel(cmd_id)
 
     async def _dispatch_node_command(self, mq, serial: str, cmd_id: int, payload: dict,
                                      fut: "asyncio.Future", timeout: float) -> dict:
@@ -282,6 +291,12 @@ class SourceManager:
         try:
             return await asyncio.wait_for(fut, timeout=timeout)
         except asyncio.TimeoutError:
+            # Lệnh paho còn GIỮ vì mất broker (NO_CONN, chưa gửi) thì rút ra:
+            # vừa không để node chạy muộn, vừa biết CHẮC là lệnh chưa đi.
+            cancel = getattr(mq, "cancel_pending", None)
+            if cancel is not None and cancel(cmd_id):
+                return {"ok": False, "status": "error",
+                        "error": "mất kết nối broker, lệnh chưa gửi được và đã hủy"}
             # KHÔNG thể phân biệt "lệnh thật sự không chạy được" với "đã chạy
             # nhưng ACK bị mất mạng" - node_ack_command() không bao giờ được
             # gọi thì future ở đây chỉ biết nó chờ quá lâu, không biết kết

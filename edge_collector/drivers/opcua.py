@@ -87,6 +87,11 @@ class OpcuaDriver(SourceDriver):
         node = self._write_nodes.get(channel_code)
         if not node:
             return {"ok": False, "error": "không có write-node cho kênh %s" % channel_code}
+        # Socket chưa mở thì CHẮC CHẮN chưa ghi -> "error". Phải kiểm TRƯỚC:
+        # asyncua 2.0.1 (ua_client.py:181,214-220) biến cả lỗi chưa-gửi lẫn
+        # đã-gửi-rồi-rớt thành cùng ConnectionError("Connection is closed").
+        if not self._socket_open():
+            return {"ok": False, "status": "error", "error": "chưa kết nối server OPC UA"}
         try:
             from asyncua import ua
             variant = ua.Variant(value, ua.VariantType.Double if isinstance(value, float)
@@ -95,7 +100,21 @@ class OpcuaDriver(SourceDriver):
             await node.write_value(ua.DataValue(variant))
             return {"ok": True, "status": "ok"}
         except Exception as exc:                                    # noqa: BLE001
+            # Đã qua kiểm socket: timeout hoặc rớt kết nối lúc này nghĩa là
+            # request có thể đã tới server - có thể đã ghi. asyncua GÓI
+            # TimeoutError thành Exception(...) from ex nên xét cả __cause__.
+            lost = (TimeoutError, ConnectionError)
+            if isinstance(exc, lost) or isinstance(exc.__cause__, lost):
+                _logger.warning("%s.%s: ghi OPC UA không xác nhận được: %s",
+                                self.code, channel_code, exc)
+                return {"ok": False, "status": "unknown",
+                        "error": "server OPC UA không trả lời / rớt kết nối - có thể đã ghi"}
             return {"ok": False, "error": str(exc)[:200]}
+
+    def _socket_open(self) -> bool:
+        from asyncua.client.ua_client import UASocketState
+        proto = getattr(getattr(self._client, "uaclient", None), "protocol", None)
+        return proto is not None and proto.state is UASocketState.OPEN
 
     async def browse(self, node_id=None, path=None) -> dict:
         try:

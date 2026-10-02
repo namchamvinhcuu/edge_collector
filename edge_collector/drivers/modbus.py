@@ -178,16 +178,29 @@ class ModbusDriver(SourceDriver):
             return {"ok": False, "error": "modbus chỉ hỗ trợ cmd=write kèm value"}
         func, addr = _parse_reg(point.get("reg"))
         raw = (float(value) - (point.get("offset") or 0)) / (point.get("scale") or 1)
+        from pymodbus.exceptions import ModbusIOException
         try:
             dtype = (point.get("dtype") or "u16").lower()
             if dtype in ("i16", "u16"):
                 # round(), KHÔNG int() - cùng lý do với _encode_32() ở trên.
-                await self._client.write_register(addr, round(raw) & 0xFFFF, device_id=self._unit)
+                rr = await self._client.write_register(addr, round(raw) & 0xFFFF, device_id=self._unit)
             else:
-                await self._client.write_registers(addr, _encode_32(dtype, raw), device_id=self._unit)
+                rr = await self._client.write_registers(addr, _encode_32(dtype, raw), device_id=self._unit)
+            if rr.isError():
+                # PLC trả exception response (địa chỉ sai, chỉ đọc...) - pymodbus
+                # KHÔNG raise, phải tự kiểm, nếu không sẽ báo "ok" sai.
+                _logger.warning("%s.%s: thiết bị từ chối ghi reg=%s: %s", self.code,
+                                channel_code, point.get("reg"), rr)
+                return {"ok": False, "status": "error", "error": "thiết bị từ chối ghi: %s" % rr}
             _logger.info("%s.%s: ghi reg=%s value=%s (raw=%s)", self.code, channel_code,
                         point.get("reg"), value, raw)
             return {"ok": True, "status": "ok"}
+        except ModbusIOException as exc:
+            # pymodbus 3.15 (transaction.py) raise lỗi này khi frame ĐÃ GỬI mà
+            # không có phản hồi sau mọi lần thử lại - PLC có thể đã ghi.
+            _logger.warning("%s.%s: ghi modbus không có phản hồi: %s", self.code, channel_code, exc)
+            return {"ok": False, "status": "unknown",
+                    "error": "thiết bị không trả lời - có thể đã ghi: %s" % str(exc)[:150]}
         except Exception as exc:                                  # noqa: BLE001
             _logger.warning("%s.%s: lỗi ghi modbus: %s", self.code, channel_code, exc)
             return {"ok": False, "error": str(exc)[:200]}

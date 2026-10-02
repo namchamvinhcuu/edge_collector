@@ -31,6 +31,14 @@ def anyio_backend():
     return "asyncio"
 
 
+class _OkResponse:
+    """pymodbus trả response object (không phải exception) kể cả khi PLC từ
+    chối - command() gọi rr.isError() nên fake phải có method này."""
+
+    def isError(self):
+        return False
+
+
 class _FakeAsyncModbusClient:
     """Fake tối thiểu cho pymodbus AsyncModbusTcpClient - chỉ ghi lại lời gọi
     write_register()/write_registers(), không thật sự nối mạng/thiết bị."""
@@ -40,11 +48,11 @@ class _FakeAsyncModbusClient:
 
     async def write_register(self, addr, value, device_id=None):
         self.calls.append(("write_register", addr, value, device_id))
-        return object()
+        return _OkResponse()
 
     async def write_registers(self, addr, values, device_id=None):
         self.calls.append(("write_registers", addr, values, device_id))
-        return object()
+        return _OkResponse()
 
 
 def _make_driver(dtype: str, scale: float, offset: float = 0.0, reg: str = "HR40001"):
