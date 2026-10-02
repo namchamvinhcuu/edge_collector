@@ -6,27 +6,115 @@
     POST /api/source/test   thử kết nối một cấu hình nguồn
     GET  /api/stats         thống kê lịch sử cục bộ (mẫu, tỷ lệ lỗi, stale)
 
-Xác thực: pcm_base/tools/edge_client.py gửi header X-Edge-Code. Trước đây chỉ
-ghi log cảnh báo khi sai (coi là 'chỉ trong LAN'); từ 2026-10-02 (task
-pcm-downlink-command, Nam duyệt) CHẶN CỨNG: thiếu/sai -> HTTP 401
-{ok:false, status:"rejected"} - /api/command ghi thẳng xuống PLC/thiết bị thật.
-GIỚI HẠN: edge_code là mã định danh (vd EDGE-LINE1), không phải bí mật - nó
-lộ ở client_id MQTT và /setup khi chưa đặt EDGE_SETUP_TOKEN. Cổng này chặn
-gọi nhầm edge, KHÔNG chặn kẻ cố ý; vẫn phải chặn tường lửa cho cổng này.
+Xác thực (từ 2026-10-02, Nam duyệt - trước đây chỉ log warning, coi là LAN):
+mọi /api/* đi qua _require_downlink_auth (dependency của router - path mới
+thêm vào router này tự được bảo vệ). Odoo gửi X-Edge-Code + X-Edge-Ts (unix
+giây) + X-Edge-Nonce (ngẫu nhiên mỗi request, ≤64 ký tự - để 2 request giống
+hệt trong cùng giây không bị coi là replay) + X-Edge-Sig = hex
+HMAC-SHA256(downlink_key, "METHOD\\npath[?query]\\nts\\nnonce\\nsha256_hex(body)").
+downlink_key do Odoo cấp qua
+/pcm/api/v1/edge/config (odoo_client.pull_config), KHÔNG bao giờ đi trên dây
+chiều này - Odoo gọi edge qua Internet bằng http. Sai/thiếu/lệch giờ >30s/
+replay/edge chưa có khóa -> HTTP 401 {"detail": {ok:false,status:"rejected"}}.
+NGOẠI LỆ: /api/latest, /api/stats (chỉ đọc) - tablet trình duyệt gọi thẳng,
+không ký được: không có X-Edge-Sig thì chỉ kiểm X-Edge-Code NẾU có; có chữ ký
+thì kiểm đủ như trên. edge_code chỉ là mã định danh, không phải bí mật.
+Vẫn nên chặn tường lửa cho cổng này.
 """
 import collections
+import hashlib
 import hmac
 import logging
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Header, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from .config import settings
 
 _logger = logging.getLogger("edge.inbound_api")
-router = APIRouter()
+
+# Đường chỉ đọc mà tablet trình duyệt gọi thẳng (không ký được) - xem docstring.
+_OPTIONAL_SIG_PATHS = frozenset({"/api/latest", "/api/stats"})
+# 30s chứ không 60s: replay cache nằm trong RAM, mất khi restart edge - cửa
+# sổ giờ là lớp chặn replay còn lại. Lệch giờ đã được bù theo header Date của
+# Odoo (odoo_client._note_server_clock) nên 30s vẫn đủ rộng.
+_SIG_MAX_SKEW_S = 30
+# Chữ ký đã dùng -> hạn (monotonic). Chặn phát lại nguyên gói trong cửa sổ
+# giờ hợp lệ. RAM là đủ: 1 worker (xem __main__.py). Giới hạn số mục.
+# Dư gấp 4 cửa sổ: hạn cache tính bằng monotonic, còn cửa sổ ts theo giờ hệ
+# thống - giờ edge bị lùi giữa 2 lần pull_config không mở lại khe replay.
+_SEEN_SIG_TTL_S = 4 * _SIG_MAX_SKEW_S
+_SEEN_SIG_MAX = 10000
+_seen_sigs: dict = {}
+
+
+def _remember_sig(sig: str) -> bool:
+    """False nếu chữ ký đã thấy trong cửa sổ (replay), True và ghi nhận nếu chưa."""
+    now = time.monotonic()
+    for old in [s for s, exp in _seen_sigs.items() if exp <= now]:
+        del _seen_sigs[old]
+    if sig in _seen_sigs:
+        return False
+    if len(_seen_sigs) >= _SEEN_SIG_MAX:
+        del _seen_sigs[next(iter(_seen_sigs))]
+    _seen_sigs[sig] = now + _SEEN_SIG_TTL_S
+    return True
+
+
+def _downlink_string_to_sign(request: Request, ts: str, nonce: str, body: bytes) -> bytes:
+    query = request.url.query
+    return ("%s\n%s%s\n%s\n%s\n%s" % (
+        request.method.upper(), request.url.path, "?" + query if query else "",
+        ts, nonce, hashlib.sha256(body).hexdigest())).encode()
+
+
+async def _downlink_auth_error(request: Request) -> Optional[str]:
+    """Lý do từ chối (không chứa giá trị bí mật), None khi hợp lệ."""
+    h = request.headers
+    code, ts, sig = h.get("x-edge-code"), h.get("x-edge-ts"), h.get("x-edge-sig")
+    if request.url.path in _OPTIONAL_SIG_PATHS and sig is None:
+        if code is None or hmac.compare_digest(code.encode(), settings.edge_code.encode()):
+            return None
+        return "X-Edge-Code sai"
+    if not code or not hmac.compare_digest(code.encode(), settings.edge_code.encode()):
+        return "X-Edge-Code %s" % ("sai" if code else "thiếu")
+    nonce = h.get("x-edge-nonce")
+    if not ts or not sig or not nonce:
+        return "thiếu X-Edge-Ts/X-Edge-Nonce/X-Edge-Sig"
+    if len(nonce) > 64:
+        return "X-Edge-Nonce quá dài"
+    store = getattr(request.app.state, "store", None)
+    key = store.kv_get("downlink_key") if store is not None else None
+    if not key or not isinstance(key, str):
+        return "edge chưa có downlink_key (chưa kéo config từ Main)"
+    try:
+        ts_int = int(ts)
+    except ValueError:
+        return "X-Edge-Ts không phải số nguyên"
+    odoo = getattr(getattr(request.app.state, "agent", None), "odoo", None)
+    now = time.time() + getattr(odoo, "clock_offset_s", 0.0)
+    if abs(now - ts_int) > _SIG_MAX_SKEW_S:
+        return "stale (lệch giờ %+.0fs)" % (ts_int - now)
+    body = await request.body()
+    expected = hmac.new(key.encode(), _downlink_string_to_sign(request, ts, nonce, body),
+                        hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig.encode(), expected.encode()):
+        return "X-Edge-Sig sai"
+    if not _remember_sig(sig):
+        return "replay"
+    return None
+
+
+async def _require_downlink_auth(request: Request) -> None:
+    reason = await _downlink_auth_error(request)
+    if reason:
+        _logger.warning("từ chối %s %s: %s", request.method, request.url.path, reason)
+        raise HTTPException(status_code=401, detail={
+            "ok": False, "status": "rejected", "error": "xác thực thất bại: %s" % reason})
+
+
+router = APIRouter(dependencies=[Depends(_require_downlink_auth)])
 
 # Ring-buffer TRONG BỘ NHỚ (KHÔNG persist SQLite) cho panel 'PCM requests' ở
 # /setup - hiển thị live request từ Odoo Main gọi xuống edge này. Mất khi
@@ -47,19 +135,6 @@ def recent_requests() -> list:
     return list(_recent_requests)
 
 
-def _check_edge_code(x_edge_code: Optional[str], required: bool = True) -> Optional[JSONResponse]:
-    """Trả JSONResponse 401 khi thiếu/sai X-Edge-Code, None khi hợp lệ.
-    required=False (đường chỉ đọc /api/latest, /api/stats): tablet trình duyệt
-    gọi thẳng, không gửi được header -> thiếu thì cho qua, có mà sai thì chặn."""
-    if x_edge_code is None and not required:
-        return None
-    if x_edge_code and hmac.compare_digest(x_edge_code.encode(), settings.edge_code.encode()):
-        return None
-    _logger.warning("từ chối request: X-Edge-Code %s", "sai" if x_edge_code else "thiếu")
-    return JSONResponse(status_code=401, content={
-        "ok": False, "status": "rejected", "error": "X-Edge-Code thiếu hoặc không khớp"})
-
-
 async def _read_json(request: Request):
     """(body, None) khi body là JSON object, (None, lỗi dạng {ok:false}) khi không."""
     try:
@@ -72,10 +147,7 @@ async def _read_json(request: Request):
 
 
 @router.post("/api/command")
-async def api_command(request: Request, x_edge_code: Optional[str] = Header(default=None)):
-    denied = _check_edge_code(x_edge_code)
-    if denied:
-        return denied
+async def api_command(request: Request):
     body, err = await _read_json(request)
     if err:
         return err
@@ -123,11 +195,7 @@ async def api_command(request: Request, x_edge_code: Optional[str] = Header(defa
 
 
 @router.get("/api/latest")
-async def api_latest(request: Request, serial: str = "", ch: str = "",
-                      x_edge_code: Optional[str] = Header(default=None)):
-    denied = _check_edge_code(x_edge_code, required=False)
-    if denied:
-        return denied
+async def api_latest(request: Request, serial: str = "", ch: str = ""):
     _log_request("/api/latest", serial=serial, ch=ch)
     store = request.app.state.store
     row = store.history_latest(serial, ch)
@@ -142,10 +210,7 @@ async def api_latest(request: Request, serial: str = "", ch: str = "",
 
 
 @router.post("/api/browse")
-async def api_browse(request: Request, x_edge_code: Optional[str] = Header(default=None)):
-    denied = _check_edge_code(x_edge_code)
-    if denied:
-        return denied
+async def api_browse(request: Request):
     body, err = await _read_json(request)
     if err:
         return err
@@ -159,10 +224,7 @@ async def api_browse(request: Request, x_edge_code: Optional[str] = Header(defau
 
 
 @router.post("/api/source/test")
-async def api_source_test(request: Request, x_edge_code: Optional[str] = Header(default=None)):
-    denied = _check_edge_code(x_edge_code)
-    if denied:
-        return denied
+async def api_source_test(request: Request):
     body, err = await _read_json(request)
     if err:
         return err
@@ -179,11 +241,7 @@ async def api_source_test(request: Request, x_edge_code: Optional[str] = Header(
 
 
 @router.get("/api/stats")
-async def api_stats(request: Request, serial: str = "", ch: str = "", hours: float = 24,
-                     x_edge_code: Optional[str] = Header(default=None)):
-    denied = _check_edge_code(x_edge_code, required=False)
-    if denied:
-        return denied
+async def api_stats(request: Request, serial: str = "", ch: str = "", hours: float = 24):
     _log_request("/api/stats", serial=serial, ch=ch, hours=hours)
     store = request.app.state.store
     since_ts = time.time() - max(0.1, hours) * 3600

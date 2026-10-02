@@ -6,7 +6,11 @@ nói chuyện thẳng với Odoo — nguyên tắc 'tầng dưới gọi tầng 
 Xác thực: header X-Edge-Code (luôn có) + X-API-Key (rỗng ở lần hello đầu tiên,
 Odoo trả về một lần rồi phải lưu lại — _hello() trong pcm_edge.py).
 """
+import datetime
+import email.utils
+import json
 import logging
+import time
 from typing import Any, Optional
 
 import httpx
@@ -23,6 +27,9 @@ class OdooClient:
     def __init__(self, store: Store):
         self.store = store
         self._client = httpx.AsyncClient(base_url=settings.main_url, timeout=_TIMEOUT)
+        # giờ Odoo - giờ edge (giây), cập nhật mỗi lần pull_config. Dùng để
+        # kiểm X-Edge-Ts của lệnh Odoo ký (inbound_api._downlink_auth_error).
+        self.clock_offset_s = 0.0
 
     @property
     def api_key(self) -> Optional[str]:
@@ -46,13 +53,33 @@ class OdooClient:
     async def aclose(self):
         await self._client.aclose()
 
-    async def _post(self, path: str, body: dict) -> dict:
+    async def _post(self, path: str, body: dict, on_response=None) -> dict:
         try:
             r = await self._client.post(path, json=body, headers=self._headers())
         except httpx.HTTPError as e:
             _logger.info("main unreachable POST %s: %s", path, e)
             return {"ok": False, "error": str(e)}
+        if on_response is not None:
+            on_response(r)
         return self._parse(r)
+
+    def _note_server_clock(self, r: httpx.Response) -> None:
+        """Độ lệch giờ edge so với Odoo, lấy từ header HTTP Date (độ phân giải
+        1 giây, đủ cho cửa sổ 30s của chữ ký downlink - inbound_api). Edge tại
+        site khách không đảm bảo có NTP."""
+        raw = r.headers.get("Date")
+        if not raw:
+            return
+        try:
+            dt = email.utils.parsedate_to_datetime(raw)
+        except (TypeError, ValueError):
+            _logger.debug("header Date không đọc được: %r", raw)
+            return
+        if dt.tzinfo is None:
+            # "-0000" cho datetime không múi giờ; .timestamp() sẽ hiểu theo
+            # giờ máy edge (lệch cả tiếng). HTTP Date luôn là UTC.
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        self.clock_offset_s = dt.timestamp() - time.time()
 
     async def _get(self, path: str, params: Optional[dict] = None) -> dict:
         try:
@@ -126,7 +153,21 @@ class OdooClient:
     # ------------------------------------------------------------------
     async def pull_config(self) -> dict:
         body = {"config_version": self.store.kv_get("config_rev", 0)}
-        return await self._post("/pcm/api/v1/edge/config", body)
+        res = await self._post("/pcm/api/v1/edge/config", body,
+                               on_response=self._note_server_clock)
+        # Khóa ký lệnh Odoo -> edge. Đọc ở MỌI response ok, không phụ thuộc
+        # config_version (lần deploy đầu version không đổi). Thiếu thì GIỮ
+        # khóa cũ. KHÔNG log giá trị.
+        if res.get("ok"):
+            cfg = res.get("config")
+            key = res.get("downlink_key") or (cfg.get("downlink_key") if isinstance(cfg, dict) else None)
+            if isinstance(key, str) and key and key != self.store.kv_get("downlink_key"):
+                # json.dumps: kv_get() luôn json.loads, khóa trông như số
+                # ("1e5") lưu thô sẽ đọc ra float - lưu dạng chuỗi JSON để
+                # đọc lại luôn là str.
+                self.store.kv_set("downlink_key", json.dumps(key))
+                _logger.info("đã nhận downlink_key mới từ Main")
+        return res
 
     async def source_status(self, rows: list, mqtt_connected: bool) -> dict:
         return await self._post("/pcm/api/v1/edge/source_status", {

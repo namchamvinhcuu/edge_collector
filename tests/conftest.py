@@ -30,3 +30,15 @@ def _restore_settings_singleton():
     yield
     _config.settings.__dict__.clear()
     _config.settings.__dict__.update(original)
+
+
+@pytest.fixture(autouse=True)
+def _clear_seen_downlink_sigs():
+    """inbound_api._seen_sigs (chống replay chữ ký downlink, task pcm-edge-hmac)
+    là dict module-level dùng chung cả tiến trình pytest - 2 test ký cùng
+    method/path/body trong cùng 1 giây sẽ ra CÙNG chữ ký, test sau bị 401
+    'replay' oan nếu không dọn."""
+    import edge_collector.inbound_api as inbound_api
+    inbound_api._seen_sigs.clear()
+    yield
+    inbound_api._seen_sigs.clear()

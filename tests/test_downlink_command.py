@@ -31,6 +31,8 @@ from edge_collector.config import settings
 from edge_collector.manager import NODE_CMD_MAX_BYTES, NODE_SIGNED_CMD_MAX_BYTES, SourceManager
 from edge_collector.mqtt_consumer import MqttConsumer, _canonical, _verify_sig
 
+from downlink_signing import DOWNLINK_KEY, DownlinkSigner
+
 API_KEY = "node-key-123"  # secret-allow: test fixture, không phải credential thật
 
 
@@ -88,6 +90,10 @@ class _FakeInboundManager:
 
 
 class _FakeStore:
+    # pcm-edge-hmac: _require_downlink_auth đọc kv "downlink_key" từ store.
+    def kv_get(self, k, default=None):
+        return DOWNLINK_KEY if k == "downlink_key" else default
+
     def history_latest(self, serial, ch):
         return None
 
@@ -95,12 +101,17 @@ class _FakeStore:
         return {"samples": 0}
 
 
-def _inbound_client(manager=None, headers=None):
+def _inbound_client(manager=None, headers=None, signed=True):
+    """signed=True (mặc định, pcm-edge-hmac): mọi request tự ký HMAC như Odoo.
+    signed=False: giả lập tablet trình duyệt (không có X-Edge-Ts/X-Edge-Sig)."""
     app = FastAPI()
     app.include_router(inbound_api.router)
     app.state.manager = manager or _FakeInboundManager()
     app.state.store = _FakeStore()
-    return TestClient(app, headers=headers or {}), app.state.manager
+    client = TestClient(app, headers=headers or {})
+    if signed:
+        client.auth = DownlinkSigner()
+    return client, app.state.manager
 
 
 def _good_headers():
@@ -131,7 +142,7 @@ _READ_ENDPOINTS = [e for e in _ENDPOINTS if e[0] == "get"]
 
 def _assert_rejected_untouched(resp, manager):
     assert resp.status_code == 401
-    data = resp.json()
+    data = resp.json()["detail"]
     assert data["ok"] is False
     assert data["status"] == "rejected"
     assert data["error"]
@@ -146,9 +157,10 @@ def _assert_rejected_untouched(resp, manager):
                                      {"X-Edge-Code": settings.edge_code[:-1]}],
                          ids=["wrong", "empty", "prefix"])
 def test_read_endpoints_reject_present_but_wrong_edge_code_with_401(method, url, body, headers):
-    """Header rỗng "" là CÓ header (chỉ None/thiếu mới được miễn) -> 401."""
+    """Header rỗng "" là CÓ header (chỉ None/thiếu mới được miễn) -> 401.
+    Không ký (tablet) - đúng nhánh 'chỉ kiểm X-Edge-Code nếu có'."""
     manager = _FakeInboundManager(driver=_FakeDriver())
-    client, _ = _inbound_client(manager, headers=headers)
+    client, _ = _inbound_client(manager, headers=headers, signed=False)
     inbound_api._recent_requests.clear()
 
     resp = _call(client, method, url, body)
@@ -158,7 +170,8 @@ def test_read_endpoints_reject_present_but_wrong_edge_code_with_401(method, url,
 
 @pytest.mark.parametrize("method,url,body", _READ_ENDPOINTS)
 def test_read_endpoints_allow_missing_edge_code(method, url, body):
-    client, _ = _inbound_client(_FakeInboundManager(driver=_FakeDriver()), headers={})
+    client, _ = _inbound_client(_FakeInboundManager(driver=_FakeDriver()), headers={},
+                                signed=False)
     inbound_api._recent_requests.clear()
 
     resp = _call(client, method, url, body)
@@ -179,10 +192,10 @@ def test_api_endpoints_reject_missing_or_wrong_edge_code_with_401(method, url, b
     resp = _call(client, method, url, body)
 
     assert resp.status_code == 401
-    data = resp.json()
+    data = resp.json()["detail"]
     assert data["ok"] is False
     assert data["status"] == "rejected"
-    assert data["error"]
+    assert "X-Edge-Code" in data["error"]
     # Bị chặn TRƯỚC khi chạm manager/driver/thiết bị - và không log như request hợp lệ.
     assert manager.queue_calls == [] and manager.driver_lookups == []
     assert manager.driver.calls == []
