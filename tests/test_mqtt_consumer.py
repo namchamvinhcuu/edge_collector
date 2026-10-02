@@ -90,13 +90,16 @@ class _FakeAgentManager:
     def __init__(self, api_key=None):
         self.touched = []
         self.acked = []
+        self.acked_serials = []
         self._api_key = api_key
 
     def touch_node(self, serial):
         self.touched.append(serial)
 
-    def node_ack_command(self, cmd_id, ok, detail=""):
+    def node_ack_command(self, cmd_id, ok, detail="", *, serial):
+        # serial BẮT BUỘC keyword (khớp chữ ký thật manager.node_ack_command).
         self.acked.append((cmd_id, ok, detail))
+        self.acked_serials.append(serial)
 
     def cached_node_api_key(self, serial):
         """Giả lập Odoo đã cấp (hoặc chưa cấp, trả None) api_key cho serial -
@@ -181,6 +184,9 @@ def test_handle_cmdack_message_forwards_to_manager_node_ack_command(consumer):
 
     assert consumer.stats["cmd_acked"] == 1
     assert consumer._agent.manager.acked == [(5, True, "")]
+    # serial lấy từ TOPIC (fms/<serial>/cmdack), chuyển xuống để manager đối
+    # chiếu chủ lệnh - chống node A ack lệnh của node B.
+    assert consumer._agent.manager.acked_serials == ["NODE1"]
 
 
 def test_handle_cmdack_with_non_int_id_increments_bad_and_skips_ack(consumer):

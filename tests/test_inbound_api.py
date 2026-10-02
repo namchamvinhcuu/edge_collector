@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import edge_collector.inbound_api as inbound_api
+from edge_collector.config import settings
 
 
 def _clear():
@@ -73,9 +74,10 @@ class _FakeManagerForExtra:
     def known_node_serials(self):
         return ["NODE1"]
 
-    async def queue_command(self, serial, ch, cmd, value, extra=None):
+    async def queue_command(self, serial, ch, cmd, value, extra=None, request_id=None):
         self.queue_command_calls.append(
-            {"serial": serial, "ch": ch, "cmd": cmd, "value": value, "extra": extra})
+            {"serial": serial, "ch": ch, "cmd": cmd, "value": value, "extra": extra,
+             "request_id": request_id})
         return {"ok": True}
 
 
@@ -84,7 +86,9 @@ def _client_with_fake_manager():
     app.include_router(inbound_api.router)
     manager = _FakeManagerForExtra()
     app.state.manager = manager
-    return TestClient(app), manager
+    # Từ task pcm-downlink-command (2026-10-02) /api/* CHẶN CỨNG khi thiếu/sai
+    # X-Edge-Code -> client mặc định gửi header ĐÚNG (settings.edge_code).
+    return TestClient(app, headers={"X-Edge-Code": settings.edge_code}), manager
 
 
 def test_api_command_extra_keeps_only_ms_and_period_ms_numeric_values():

@@ -45,7 +45,7 @@ async def _queue_and_ack(manager, serial="NODE1", ch="relay_red", cmd="write",
     await asyncio.sleep(0)
     # cmd_id là _node_cmd_seq HIỆN TẠI (queue_command đã tăng trước khi await).
     cmd_id = manager._node_cmd_seq
-    acked = manager.node_ack_command(cmd_id, ack_ok, ack_detail)
+    acked = manager.node_ack_command(cmd_id, ack_ok, ack_detail, serial=serial)
     result = await task
     return result, acked
 

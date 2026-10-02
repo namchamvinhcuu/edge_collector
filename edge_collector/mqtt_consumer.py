@@ -113,6 +113,9 @@ class MqttConsumer:
         # serial -> firmware có biết nhận lệnh qua MQTT không (có "cmd" trong
         # chủ đề status). Không đoán: node tự khai.
         self.caps = {}
+        # serial -> firmware có xác minh HMAC cho lệnh xuống không ("sig_cmd"
+        # trong status). Có thì manager ký lệnh, không thì gửi gói không ký.
+        self.sig_caps = {}
         self._hb_task = None
         # Nhật ký gói tin cho trang /ops. Vòng đệm trong BỘ NHỚ, không ghi
         # đĩa: đây là kính lúc, không phải sổ sách. SQLite history mới là
@@ -244,6 +247,10 @@ class MqttConsumer:
             # không bao giờ poll nữa.
             if online and data.get("cmd"):
                 self.caps[serial] = True
+                # Đặt lại theo MỖI lần node báo online (không chỉ bật lên): hạ
+                # firmware về bản chưa biết xác minh thì phải thôi ký, nếu
+                # không gói dài ra và bộ đệm 192 byte của ESP32 cắt mất lệnh.
+                self.sig_caps[serial] = bool(data.get("sig_cmd"))
             _logger.info("node %s: %s%s", serial,
                          "online" if online else "OFFLINE (Last Will)",
                          ", nhận lệnh qua MQTT" if self.caps.get(serial) else "")
@@ -264,7 +271,7 @@ class MqttConsumer:
                             "lệnh #%s %s%s" % (cmd_id, "OK" if ok else "TỪ CHỐI",
                                                "" if ok else ": " + str(data.get("detail") or "")))
             self._agent.manager.node_ack_command(
-                cmd_id, ok, data.get("detail") or "")
+                cmd_id, ok, data.get("detail") or "", serial=serial)
             return
 
         items = data.get("items")
@@ -359,8 +366,13 @@ class MqttConsumer:
         topic = _cmd_topic(serial)
         if topic is None:
             return False
+        # Gói đã ký đi dạng canonical: firmware C chỉ cần cắt chuỗi con
+        # `"sig":"<64hex>",` khỏi raw bytes là ra đúng chuỗi để băm (khi sort,
+        # "sig" luôn đứng trước "ts"/"value"). Gói không ký giữ nguyên dạng cũ
+        # cho firmware hiện tại.
+        body = _canonical(payload).decode() if "sig" in payload else json.dumps(payload)
         try:
-            info = self._cli.publish(topic, json.dumps(payload), qos=1)
+            info = self._cli.publish(topic, body, qos=1)
         except Exception as exc:                                  # noqa: BLE001
             _logger.warning("không đẩy được lệnh tới %s: %s", topic, exc)
             return False

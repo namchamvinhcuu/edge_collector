@@ -14,10 +14,13 @@ node tự POLL lấy, kết quả được ACK về và trả lời lại cho /a
 chờ (queue_command / node_pull_command / node_ack_command).
 """
 import asyncio
+import json
 import logging
+import random
 import time
 from typing import Callable, Optional
 
+from .mqtt_consumer import _canonical, _sign
 from .drivers.base import SourceDriver
 from .drivers.mqtt import MqttDriver
 from .drivers.modbus import ModbusDriver
@@ -28,6 +31,14 @@ from .drivers.sim import SimDriver
 _logger = logging.getLogger("edge.manager")
 
 OnValue = Callable[[str, str, object, object, int, object, object], None]
+
+# Firmware ESP32 phân tích gói lệnh bằng bộ đệm 192 byte - gói dài hơn bị cắt
+# và lệnh im lặng không chạy. Chỉ dùng để quyết có gắn request_id cho node
+# CHƯA khai sig_cmd hay không.
+NODE_CMD_MAX_BYTES = 192
+# Node đã khai sig_cmd (firmware mới) dùng bộ đệm 320 byte (mqtt_link.c
+# CMD_JSON_MAX, bỏ gói khi data_len >= 320) - gói ký đi dạng canonical.
+NODE_SIGNED_CMD_MAX_BYTES = 320
 
 
 class SourceManager:
@@ -51,7 +62,10 @@ class SourceManager:
         self._node_last_seen: dict[str, float] = {}
         self._node_queues: dict[str, "asyncio.Queue"] = {}
         self._node_futures: dict[int, "asyncio.Future"] = {}
-        self._node_cmd_seq = 0
+        self._node_cmd_owner: dict[int, str] = {}   # cmd_id -> serial được gửi lệnh
+        # Bắt đầu từ số ngẫu nhiên mỗi lần khởi động: ack muộn của lệnh trước
+        # restart không trùng id với lệnh mới (vẫn là int - firmware đọc số).
+        self._node_cmd_seq = random.randint(1, 2 ** 30)
 
     # ------------------------------------------------------------------
     def is_raw_forward(self, ch_code: str) -> bool:
@@ -193,17 +207,56 @@ class SourceManager:
         return (serial, ch_code) in self._route or serial in self._node_last_seen
 
     async def queue_command(self, serial: str, ch: str, cmd: str, value,
-                            timeout: float = 8.0, extra: Optional[dict] = None) -> dict:
+                            timeout: float = 8.0, extra: Optional[dict] = None,
+                            request_id: Optional[str] = None) -> dict:
         """Xếp một lệnh cho NODE (không có driver điều khiển được — vd http_node),
         cho node tự poll rồi ack. Dùng khi driver_for_channel() trả về None."""
         self._node_cmd_seq += 1
         cmd_id = self._node_cmd_seq
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._node_futures[cmd_id] = fut
         payload = {"id": cmd_id, "channel": ch, "cmd": cmd, "value": value}
         if extra:
             payload.update(extra)
 
+        mq = getattr(self, "mqtt_cmd", None)
+        # Ký HMAC chỉ khi node TỰ KHAI "sig_cmd" trong status: firmware cũ
+        # (bộ đệm 192 byte) nhận gói có sig/ts sẽ bị cắt và lệnh không chạy.
+        # Format chốt 2026-10-02 với node_agent: thêm request_id/ts trước,
+        # ký sau cùng, canonical y như chiều lên (mqtt_consumer._sign).
+        if mq is not None and getattr(mq, "sig_caps", {}).get(serial):
+            api_key = self.cached_node_api_key(serial)
+            if not api_key:
+                return {"ok": False, "status": "error",
+                        "error": "edge chưa có api_key của %s để ký lệnh" % serial}
+            signed = self._sign_node_command(api_key, payload, request_id)
+            if len(_canonical(signed)) >= NODE_SIGNED_CMD_MAX_BYTES and request_id:
+                _logger.info("lệnh #%s cho %s: bỏ request_id vì gói ký vượt %d byte",
+                             cmd_id, serial, NODE_SIGNED_CMD_MAX_BYTES)
+                signed = self._sign_node_command(api_key, payload, None)
+            if len(_canonical(signed)) >= NODE_SIGNED_CMD_MAX_BYTES:
+                return {"ok": False, "status": "error",
+                        "error": "lệnh quá dài cho bộ đệm %d byte của node" % NODE_SIGNED_CMD_MAX_BYTES}
+            payload = signed
+        elif request_id:
+            with_rid = dict(payload, request_id=request_id)
+            # '<' chứ không '<=': firmware giữ 1 byte cho NUL (mqtt_link.c
+            # bỏ gói khi data_len >= 192).
+            if len(json.dumps(with_rid)) < NODE_CMD_MAX_BYTES:
+                payload = with_rid
+            else:
+                _logger.info("lệnh #%s cho %s: bỏ request_id vì gói vượt %d byte",
+                             cmd_id, serial, NODE_CMD_MAX_BYTES)
+
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._node_futures[cmd_id] = fut
+        self._node_cmd_owner[cmd_id] = serial
+        try:
+            return await self._dispatch_node_command(mq, serial, cmd_id, payload, fut, timeout)
+        finally:
+            self._node_futures.pop(cmd_id, None)
+            self._node_cmd_owner.pop(cmd_id, None)
+
+    async def _dispatch_node_command(self, mq, serial: str, cmd_id: int, payload: dict,
+                                     fut: "asyncio.Future", timeout: float) -> dict:
         # Đường MQTT trước, hàng đợi poll làm dự phòng.
         #
         # Khác biệt không nhỏ: hàng đợi poll bắt node tự đi hỏi mỗi 2 giây,
@@ -213,7 +266,6 @@ class SourceManager:
         # Chọn đường dựa trên cờ "cmd" node tự báo trong <gốc>/<serial>/status
         # chứ không dựa trên cấu hình bên này: firmware cũ không biết nghe
         # MQTT vẫn phải được phục vụ bằng hàng đợi, và nó tự nói điều đó.
-        mq = getattr(self, "mqtt_cmd", None)
         if mq is not None and mq.publish_command(serial, payload):
             pass
         elif mq is not None and mq.caps.get(serial):
@@ -222,8 +274,7 @@ class SourceManager:
             # nên không còn ai gọi /node/v1/commands để lấy ra — lệnh sẽ nằm
             # đó mãi mãi, vừa rò rỉ bộ nhớ vừa báo sai nguyên nhân cho người
             # bấm nút. Báo thật luôn.
-            self._node_futures.pop(cmd_id, None)
-            return {"ok": False,
+            return {"ok": False, "status": "error",
                     "error": "node %s đang không kết nối tới broker" % serial}
         else:
             # Firmware cũ, vẫn tự poll /node/v1/commands.
@@ -246,18 +297,36 @@ class SourceManager:
             return {"ok": False, "status": "unknown",
                     "error": "node không trả lời trong %.0fs - có thể đã thực thi "
                              "nhưng mất ACK" % timeout}
-        finally:
-            self._node_futures.pop(cmd_id, None)
+
+    @staticmethod
+    def _sign_node_command(api_key: str, payload: dict, request_id: Optional[str]) -> dict:
+        signed = dict(payload)
+        if request_id:
+            signed["request_id"] = request_id
+        signed["ts"] = int(time.time())
+        signed["sig"] = _sign(api_key, signed)
+        return signed
 
     def node_pull_command(self, serial: str) -> Optional[dict]:
+        """Lệnh kế tiếp còn hiệu lực cho node poll. Lệnh mà queue_command() đã
+        thôi chờ (timeout) bị BỎ QUA: firmware cũ poll muộn không được chạy
+        lệnh người dùng đã được báo là 'không xác nhận'."""
         q = self._node_queues.get(serial)
-        if not q or q.empty():
-            return None
-        return q.get_nowait()
+        while q and not q.empty():
+            payload = q.get_nowait()
+            if payload["id"] in self._node_futures:
+                return payload
+            _logger.info("bỏ lệnh #%s cho %s: đã hết hạn chờ ACK", payload["id"], serial)
+        return None
 
-    def node_ack_command(self, cmd_id: int, ok: bool, detail: str = "") -> bool:
+    def node_ack_command(self, cmd_id: int, ok: bool, detail: str = "", *,
+                         serial: str) -> bool:
         fut = self._node_futures.get(cmd_id)
         if not fut or fut.done():
+            return False
+        owner = self._node_cmd_owner.get(cmd_id)
+        if owner != serial:
+            _logger.warning("bỏ ACK lệnh #%s từ %s: lệnh này gửi cho %s", cmd_id, serial, owner)
             return False
         fut.set_result({"ok": ok, "status": "ok" if ok else "error", "error": None if ok else detail})
         return True

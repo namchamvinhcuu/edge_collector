@@ -130,7 +130,7 @@ async def node_commands_ack(request: Request, x_device_serial: Optional[str] = H
     if not isinstance(cmd_id, int):
         return {"ok": False, "error": "id phải là số nguyên"}
     ok = request.app.state.manager.node_ack_command(cmd_id, bool(body.get("ok")),
-                                                     body.get("detail") or "")
+                                                     body.get("detail") or "", serial=serial)
     return {"ok": ok}
 
 

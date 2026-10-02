@@ -6,18 +6,22 @@
     POST /api/source/test   thử kết nối một cấu hình nguồn
     GET  /api/stats         thống kê lịch sử cục bộ (mẫu, tỷ lệ lỗi, stale)
 
-Xác thực: pcm_base/tools/edge_client.py CHỈ gửi header X-Edge-Code, không có
-khóa bí mật (thiết kế coi đây là 'chỉ trong LAN', giống edge_compat.py của
-fms_iot_edge). Ở đây kiểm tra header đó khớp settings.edge_code khi có mặt -
-không chặn cứng nếu thiếu (để tương thích thiết kế gốc) nhưng sẽ ghi log cảnh
-báo. HÃY tự chặn tường lửa/route riêng cho cổng này, đừng để tràn ra Internet.
+Xác thực: pcm_base/tools/edge_client.py gửi header X-Edge-Code. Trước đây chỉ
+ghi log cảnh báo khi sai (coi là 'chỉ trong LAN'); từ 2026-10-02 (task
+pcm-downlink-command, Nam duyệt) CHẶN CỨNG: thiếu/sai -> HTTP 401
+{ok:false, status:"rejected"} - /api/command ghi thẳng xuống PLC/thiết bị thật.
+GIỚI HẠN: edge_code là mã định danh (vd EDGE-LINE1), không phải bí mật - nó
+lộ ở client_id MQTT và /setup khi chưa đặt EDGE_SETUP_TOKEN. Cổng này chặn
+gọi nhầm edge, KHÔNG chặn kẻ cố ý; vẫn phải chặn tường lửa cho cổng này.
 """
 import collections
+import hmac
 import logging
 import time
 from typing import Optional
 
 from fastapi import APIRouter, Header, Request
+from fastapi.responses import JSONResponse
 
 from .config import settings
 
@@ -43,17 +47,43 @@ def recent_requests() -> list:
     return list(_recent_requests)
 
 
-def _check_edge_code(x_edge_code: Optional[str]):
-    if x_edge_code and x_edge_code != settings.edge_code:
-        _logger.warning("X-Edge-Code không khớp (%s) - kiểm tra tường lửa cho cổng này", x_edge_code)
+def _check_edge_code(x_edge_code: Optional[str]) -> Optional[JSONResponse]:
+    """Trả JSONResponse 401 khi thiếu/sai X-Edge-Code, None khi hợp lệ."""
+    if x_edge_code and hmac.compare_digest(x_edge_code.encode(), settings.edge_code.encode()):
+        return None
+    _logger.warning("từ chối request: X-Edge-Code %s", "sai" if x_edge_code else "thiếu")
+    return JSONResponse(status_code=401, content={
+        "ok": False, "status": "rejected", "error": "X-Edge-Code thiếu hoặc không khớp"})
+
+
+async def _read_json(request: Request):
+    """(body, None) khi body là JSON object, (None, lỗi dạng {ok:false}) khi không."""
+    try:
+        body = await request.json()
+    except ValueError:
+        return None, {"ok": False, "status": "error", "error": "body không phải JSON hợp lệ"}
+    if not isinstance(body, dict):
+        return None, {"ok": False, "status": "error", "error": "body phải là JSON object"}
+    return body, None
 
 
 @router.post("/api/command")
 async def api_command(request: Request, x_edge_code: Optional[str] = Header(default=None)):
-    _check_edge_code(x_edge_code)
-    body = await request.json()
+    denied = _check_edge_code(x_edge_code)
+    if denied:
+        return denied
+    body, err = await _read_json(request)
+    if err:
+        return err
     serial, ch, cmd = body.get("serial"), body.get("channel"), body.get("cmd") or "read"
     value = body.get("value")
+    if not serial or not ch:
+        return {"ok": False, "status": "error", "error": "thiếu serial hoặc channel"}
+    # request_id: uuid hex Odoo sinh cho mỗi lần bấm, node dùng để chống chạy
+    # trùng. Chỉ nhận chuỗi ngắn - nó đi xuống firmware bộ đệm nhỏ.
+    request_id = body.get("request_id")
+    if not (isinstance(request_id, str) and 0 < len(request_id) <= 64):
+        request_id = None
     # Tham số phụ cho các kiểu phát của đèn: {"ms": 10000} = sáng 10 giây rồi
     # tự tắt, {"cmd":"blink","period_ms":500,"ms":30000} = chớp 30 giây.
     #
@@ -66,21 +96,28 @@ async def api_command(request: Request, x_edge_code: Optional[str] = Header(defa
     extra = {k: body[k] for k in ("ms", "period_ms") if type(body.get(k)) in (int, float)}
     _log_request("/api/command", serial=serial, ch=ch, cmd=cmd)
     manager = request.app.state.manager
-    driver = manager.driver_for_channel(serial, ch)
-    if driver:
-        return await driver.command(ch, cmd, value)
-    if serial in manager.known_node_serials():
-        # Node không bị gọi ngược được: hoặc đẩy xuống qua MQTT, hoặc xếp
-        # hàng cho firmware cũ tự poll — manager tự chọn, xem queue_command().
-        return await manager.queue_command(serial, ch, cmd, value, extra=extra)
-    return {"ok": False,
+    try:
+        driver = manager.driver_for_channel(serial, ch)
+        if driver:
+            return await driver.command(ch, cmd, value)
+        if serial in manager.known_node_serials():
+            # Node không bị gọi ngược được: hoặc đẩy xuống qua MQTT, hoặc xếp
+            # hàng cho firmware cũ tự poll — manager tự chọn, xem queue_command().
+            return await manager.queue_command(serial, ch, cmd, value, extra=extra,
+                                               request_id=request_id)
+    except Exception as exc:                                        # noqa: BLE001
+        _logger.exception("lỗi thực thi lệnh %s trên %s/%s", cmd, serial, ch)
+        return {"ok": False, "status": "error", "error": str(exc)[:200]}
+    return {"ok": False, "status": "error",
             "error": "không tìm thấy kênh %s của %s đang chạy trên edge này" % (ch, serial)}
 
 
 @router.get("/api/latest")
 async def api_latest(request: Request, serial: str = "", ch: str = "",
                       x_edge_code: Optional[str] = Header(default=None)):
-    _check_edge_code(x_edge_code)
+    denied = _check_edge_code(x_edge_code)
+    if denied:
+        return denied
     _log_request("/api/latest", serial=serial, ch=ch)
     store = request.app.state.store
     row = store.history_latest(serial, ch)
@@ -96,8 +133,12 @@ async def api_latest(request: Request, serial: str = "", ch: str = "",
 
 @router.post("/api/browse")
 async def api_browse(request: Request, x_edge_code: Optional[str] = Header(default=None)):
-    _check_edge_code(x_edge_code)
-    body = await request.json()
+    denied = _check_edge_code(x_edge_code)
+    if denied:
+        return denied
+    body, err = await _read_json(request)
+    if err:
+        return err
     source_code, node_id, path = body.get("source"), body.get("node_id"), body.get("path")
     _log_request("/api/browse", source=source_code)
     manager = request.app.state.manager
@@ -109,8 +150,12 @@ async def api_browse(request: Request, x_edge_code: Optional[str] = Header(defau
 
 @router.post("/api/source/test")
 async def api_source_test(request: Request, x_edge_code: Optional[str] = Header(default=None)):
-    _check_edge_code(x_edge_code)
-    body = await request.json()
+    denied = _check_edge_code(x_edge_code)
+    if denied:
+        return denied
+    body, err = await _read_json(request)
+    if err:
+        return err
     src_cfg = body.get("source") or {}
     _log_request("/api/source/test", kind=src_cfg.get("kind"))
     manager = request.app.state.manager
@@ -124,7 +169,9 @@ async def api_source_test(request: Request, x_edge_code: Optional[str] = Header(
 @router.get("/api/stats")
 async def api_stats(request: Request, serial: str = "", ch: str = "", hours: float = 24,
                      x_edge_code: Optional[str] = Header(default=None)):
-    _check_edge_code(x_edge_code)
+    denied = _check_edge_code(x_edge_code)
+    if denied:
+        return denied
     _log_request("/api/stats", serial=serial, ch=ch, hours=hours)
     store = request.app.state.store
     since_ts = time.time() - max(0.1, hours) * 3600
