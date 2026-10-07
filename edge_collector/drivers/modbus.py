@@ -11,6 +11,7 @@ khai báo nhiều pcm.source, mỗi cái một endpoint/serial port riêng.
 """
 import asyncio
 import logging
+import math
 import re
 import struct
 
@@ -178,6 +179,10 @@ class ModbusDriver(SourceDriver):
             return {"ok": False, "error": "modbus chỉ hỗ trợ cmd=write kèm value"}
         func, addr = _parse_reg(point.get("reg"))
         raw = (float(value) - (point.get("offset") or 0)) / (point.get("scale") or 1)
+        # float("nan")/float("inf") từ value dạng chuỗi, hoặc scale rất nhỏ làm
+        # tràn ra inf: f32 sẽ ghi NaN/Inf thẳng xuống PLC mà vẫn báo ok.
+        if not math.isfinite(raw):
+            return {"ok": False, "status": "error", "error": "value không phải số hữu hạn"}
         from pymodbus.exceptions import ModbusIOException
         try:
             dtype = (point.get("dtype") or "u16").lower()

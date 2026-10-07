@@ -188,3 +188,44 @@ def test_encode_32_f32_keeps_fractional_value_not_rounded_to_integer():
     regs = _encode_32("f32", value)
     decoded = struct.unpack(">f", struct.pack(">HH", *regs))[0]
     assert decoded == value          # giữ nguyên phần thập phân, KHÔNG làm tròn về số nguyên
+
+
+# ---------------------------------------------------------------------------
+# 7) Regression esp32-nonfinite-cmd (reviewer finding): value không hữu hạn
+#    ("nan"/"inf" dạng chuỗi -> float() nhận, hoặc scale rất nhỏ làm tràn ra
+#    inf) KHÔNG được ghi xuống PLC. Trước fix, f32 ghi thẳng NaN/Inf và báo ok.
+# ---------------------------------------------------------------------------
+
+_NONFINITE_ERR = {"ok": False, "status": "error", "error": "value không phải số hữu hạn"}
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-Infinity", float("nan"), float("-inf")],
+                         ids=["str-nan", "str-inf", "str-neg-Infinity", "float-nan", "float-neg-inf"])
+@pytest.mark.parametrize("dtype", ["f32", "i32", "u16"])
+async def test_command_rejects_nonfinite_value_without_writing(dtype, value):
+    driver = _make_driver(dtype=dtype, scale=1)
+
+    result = await driver.command("speed", "write", value)
+
+    assert result == _NONFINITE_ERR
+    assert driver._client.calls == []
+
+
+async def test_command_f32_finite_value_overflowing_to_inf_by_tiny_scale_is_rejected():
+    value, scale = 1e308, 1e-10
+    assert value / scale == float("inf")    # xác nhận tiền đề: giá trị hữu hạn tràn ra inf
+
+    driver = _make_driver(dtype="f32", scale=scale)
+    result = await driver.command("speed", "write", value)
+
+    assert result == _NONFINITE_ERR
+    assert driver._client.calls == []
+
+
+async def test_command_f32_normal_write_still_calls_write_registers():
+    driver = _make_driver(dtype="f32", scale=1)
+
+    result = await driver.command("speed", "write", "42.5")
+
+    assert result == {"ok": True, "status": "ok"}
+    assert driver._client.calls == [("write_registers", 0, _encode_32("f32", 42.5), 1)]

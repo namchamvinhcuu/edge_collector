@@ -172,6 +172,16 @@ async def api_command(request: Request):
     # từ Odoo sẽ lọt qua isinstance(x, (int, float)) và merge xuống firmware dưới
     # dạng JSON "true" - firmware đợi số nguyên cho "ms", hỏng lặng lẽ.
     extra = {k: body[k] for k in ("ms", "period_ms") if type(body.get(k)) in (int, float)}
+    # request.json() nhận NaN/Infinity (và 1e400 -> inf); json.dumps lại phát ra
+    # NaN/Infinity - không phải JSON hợp lệ, cJSON trên node bỏ cả gói, lệnh
+    # mất im lặng không có ack. Chặn ở đây để Odoo nhận ok:false rõ ràng.
+    # allow_nan=False bắt cả NaN lồng trong value dạng list/dict.
+    for k, v in (*extra.items(), ("value", value)):
+        try:
+            json.dumps(v, allow_nan=False)
+        except ValueError:
+            return {"ok": False, "status": "error",
+                    "error": "%s không phải số hữu hạn" % k}
     _log_request("/api/command", serial=serial, ch=ch, cmd=cmd)
     manager = request.app.state.manager
     try:

@@ -348,6 +348,128 @@ def test_api_command_without_request_id_key_forwards_none():
     assert manager.queue_calls[0]["request_id"] is None
 
 
+# --- esp32-nonfinite-cmd: chặn NaN/Infinity trong ms/period_ms/value ---
+# Regression: request.json() nhận NaN/Infinity (và 1e400 -> inf); json.dumps
+# phát lại NaN/Infinity -> cJSON trên ESP32 bỏ cả gói, lệnh mất im lặng không ack.
+# Body gửi dạng bytes thô (json= của httpx không serialize được portable).
+_NONFINITE_LITERALS = ["NaN", "Infinity", "-Infinity", "1e400", "-1e400"]
+
+
+def _post_raw(client, raw):
+    return client.post("/api/command", content=raw.encode(),
+                       headers={"Content-Type": "application/json"})
+
+
+@pytest.mark.parametrize("key", ["ms", "period_ms", "value"])
+@pytest.mark.parametrize("lit", _NONFINITE_LITERALS)
+def test_api_command_rejects_nonfinite_number_node_path(key, lit):
+    manager = _FakeInboundManager(driver=None)
+    client, _ = _inbound_client(manager, headers=_good_headers())
+    raw = '{"serial": "NODE1", "channel": "relay_red", "cmd": "on", "%s": %s}' % (key, lit)
+
+    resp = _post_raw(client, raw)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": False, "status": "error",
+                           "error": "%s không phải số hữu hạn" % key}
+    assert manager.queue_calls == [] and manager.driver_lookups == []
+
+
+@pytest.mark.parametrize("key", ["ms", "period_ms", "value"])
+@pytest.mark.parametrize("lit", ["NaN", "Infinity", "-Infinity", "1e400"])
+def test_api_command_rejects_nonfinite_number_driver_path(key, lit):
+    driver = _FakeDriver()
+    manager = _FakeInboundManager(driver=driver)
+    client, _ = _inbound_client(manager, headers=_good_headers())
+    raw = '{"serial": "PLC1", "channel": "c1", "cmd": "write", "%s": %s}' % (key, lit)
+
+    resp = _post_raw(client, raw)
+
+    assert resp.json()["ok"] is False and resp.json()["status"] == "error"
+    assert driver.calls == [] and manager.driver_lookups == [] and manager.queue_calls == []
+
+
+@pytest.mark.parametrize("raw_value", [
+    "[1, NaN]",
+    '{"a": Infinity}',
+    '{"a": [2, {"b": -Infinity}]}',
+    "[1e400]",
+], ids=["list-nan", "dict-inf", "nested-neg-inf", "list-overflow"])
+@pytest.mark.parametrize("serial", ["NODE1", "PLC1"], ids=["node", "driver"])
+def test_api_command_rejects_nonfinite_nested_in_value(raw_value, serial):
+    # Regression (reviewer finding): guard cũ chỉ xét float cấp ngoài cùng ->
+    # NaN lồng trong list/dict vẫn lọt xuống node/driver.
+    driver = _FakeDriver() if serial == "PLC1" else None
+    manager = _FakeInboundManager(driver=driver)
+    client, _ = _inbound_client(manager, headers=_good_headers())
+    raw = '{"serial": "%s", "channel": "c1", "cmd": "write", "value": %s}' % (serial, raw_value)
+
+    resp = _post_raw(client, raw)
+
+    assert resp.json() == {"ok": False, "status": "error",
+                           "error": "value không phải số hữu hạn"}
+    assert manager.driver_lookups == [] and manager.queue_calls == []
+    assert driver is None or driver.calls == []
+
+
+def test_api_command_forwards_finite_nested_value():
+    driver = _FakeDriver()
+    client, manager = _inbound_client(_FakeInboundManager(driver=driver), headers=_good_headers())
+
+    resp = _post_raw(client, '{"serial": "PLC1", "channel": "c1", "cmd": "write", '
+                             '"value": {"a": [1, 2.5, null, "x"]}}')
+
+    assert resp.json() == {"ok": True, "status": "ok"}
+    assert driver.calls == [("c1", "write", {"a": [1, 2.5, None, "x"]})]
+
+
+@pytest.mark.parametrize("raw_extra,expected_extra,expected_value", [
+    ('"ms": 1500.0', {"ms": 1500.0}, None),
+    ('"ms": 1500', {"ms": 1500}, None),
+    ('"ms": 30000, "period_ms": 500.5', {"ms": 30000, "period_ms": 500.5}, None),
+    ('"ms": 0.0, "value": -2.5', {"ms": 0.0}, -2.5),
+    ('"value": 1e308', {}, 1e308),
+    ('"value": 7', {}, 7),
+], ids=["ms-float", "ms-int", "ms-int+period-float", "zero-and-neg-value", "big-finite", "int-value"])
+def test_api_command_forwards_finite_numbers(raw_extra, expected_extra, expected_value):
+    manager = _FakeInboundManager()
+    client, _ = _inbound_client(manager, headers=_good_headers())
+    raw = '{"serial": "NODE1", "channel": "relay_red", "cmd": "on", %s}' % raw_extra
+
+    resp = _post_raw(client, raw)
+
+    assert resp.json()["ok"] is True
+    assert len(manager.queue_calls) == 1
+    call = manager.queue_calls[0]
+    assert call["extra"] == expected_extra
+    assert call["value"] == expected_value
+
+
+def test_api_command_bool_ms_still_filtered_not_rejected():
+    manager = _FakeInboundManager()
+    client, _ = _inbound_client(manager, headers=_good_headers())
+
+    resp = client.post("/api/command", json={"serial": "NODE1", "channel": "relay_red",
+                                             "cmd": "on", "ms": True, "period_ms": False})
+
+    assert resp.json()["ok"] is True
+    assert manager.queue_calls[0]["extra"] == {}
+
+
+@pytest.mark.parametrize("value", [None, "abc", "NaN", "Infinity", True],
+                         ids=["none", "str", "str-NaN", "str-Infinity", "bool"])
+def test_api_command_non_float_value_unaffected(value):
+    driver = _FakeDriver()
+    manager = _FakeInboundManager(driver=driver)
+    client, _ = _inbound_client(manager, headers=_good_headers())
+
+    resp = client.post("/api/command", json={"serial": "PLC1", "channel": "c1",
+                                             "cmd": "write", "value": value})
+
+    assert resp.json() == {"ok": True, "status": "ok"}
+    assert driver.calls == [("c1", "write", value)]
+
+
 # ===========================================================================
 # 3-5. manager.queue_command / node_ack_command / node_pull_command
 # ===========================================================================
