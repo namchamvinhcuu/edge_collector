@@ -466,6 +466,43 @@ def test_publish_lone_surrogate_payload_is_error_not_500(raw):
     assert manager.mqtt_cmd.calls == []
 
 
+@pytest.mark.parametrize("raw", ["NaN", "Infinity", "-Infinity", "1e400",
+                                 '{"t": NaN}', "[1, -Infinity]", '{"a": [{"b": 1e400}]}'],
+                         ids=["nan", "inf", "neg-inf", "overflow", "dict-nan",
+                              "list-neg-inf", "nested-overflow"])
+def test_publish_nonfinite_payload_is_invalid_payload_not_published(raw):
+    """Regression esp32-nonfinite-cmd: request.json() nhận NaN/Infinity (1e400 ->
+    inf); json.dumps mặc định phát lại NaN/Infinity - JSON không hợp lệ, subscriber
+    cJSON bỏ gói im lặng trong khi Odoo tưởng đã publish."""
+    client, manager = _client()
+    body = ('{"topic": "plant/line1/out", "payload": %s}' % raw).encode("ascii")
+
+    resp = client.post("/api/publish", content=body,
+                       headers={"Content-Type": "application/json"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": False, "status": "error", "reason": "invalid_payload",
+                           "error": "payload chứa số không hữu hạn (NaN/Infinity)"}
+    assert manager.mqtt_cmd.calls == []
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ('{"t": 21.5, "n": [1, -2, 1e308]}', '{"t": 21.5, "n": [1, -2, 1e+308]}'),
+    ("3.5", "3.5"),
+    ('"NaN"', "NaN"),
+    ('"Infinity"', "Infinity"),
+], ids=["finite-dict", "finite-number", "str-NaN", "str-Infinity"])
+def test_publish_finite_or_string_payload_still_published(raw, expected):
+    client, manager = _client()
+    body = ('{"topic": "plant/line1/out", "payload": %s}' % raw).encode("ascii")
+
+    resp = client.post("/api/publish", content=body,
+                       headers={"Content-Type": "application/json"})
+
+    assert resp.json() == {"ok": True, "status": "ok"}
+    assert manager.mqtt_cmd.calls == [("plant/line1/out", expected)]
+
+
 def test_publish_request_log_records_size_but_not_payload():
     client, _ = _client()
 

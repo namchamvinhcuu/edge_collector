@@ -295,7 +295,9 @@ def _publish_payload(raw) -> str:
         return ""
     if isinstance(raw, str):
         return raw
-    return json.dumps(raw, ensure_ascii=False)
+    # allow_nan=False: NaN/Infinity không phải JSON hợp lệ - subscriber (cJSON)
+    # sẽ bỏ gói im lặng trong khi Odoo tưởng đã publish. Raise ValueError.
+    return json.dumps(raw, ensure_ascii=False, allow_nan=False)
 
 
 @router.post("/api/publish")
@@ -326,7 +328,10 @@ async def api_publish(request: Request):
         return _publish_error("topic_not_allowed",
                               "topic không được phép (ngoài EDGE_PUBLISH_TOPIC_ALLOW "
                               "hoặc là topic thiết bị - lệnh phải qua /api/command)")
-    payload = _publish_payload(body.get("payload"))
+    try:
+        payload = _publish_payload(body.get("payload"))
+    except ValueError:
+        return _publish_error("invalid_payload", "payload chứa số không hữu hạn (NaN/Infinity)")
     try:
         size = len(payload.encode("utf-8"))
     except UnicodeEncodeError:
